@@ -1,6 +1,6 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 3.8)
 
-PROJECT(PetersonLock)
+PROJECT(DoubleCheckInitialization)
 
 SET(CMAKE_EXPORT_COMPILE_COMMANDS YES)
 
@@ -23,13 +23,11 @@ FIND_PACKAGE(Boost 1.62.0 REQUIRED COMPONENTS unit_test_framework)
 INCLUDE_DIRECTORIES(AFTER SYSTEM ${Boost_INCLUDE_DIR})
 LINK_DIRECTORIES(${Boost_LIBRARY_DIRS})
 
-ADD_EXECUTABLE(test_petersonlock
-  TestPetersonLock.cpp
-  PetersonLock.cpp
+ADD_EXECUTABLE(DoubleCheckInitialization
+  DoubleCheckInitialization.cpp
 )
 
-TARGET_LINK_LIBRARIES(test_petersonlock
-  boost_unit_test_framework
+TARGET_LINK_LIBRARIES(DoubleCheckInitialization
   pthread
 )
 

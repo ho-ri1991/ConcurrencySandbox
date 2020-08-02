@@ -1,3 +1,4 @@
+#pragma once
 #include <stack>
 #include <mutex>
 #include <condition_variable>

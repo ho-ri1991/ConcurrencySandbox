@@ -11,7 +11,7 @@ class ThreadSafeStack
 private:
   mutable std::mutex mLock;
   std::condition_variable mCond;
-  std::stack<T> mStack;
+  std::stack<std::unique_ptr<T>> mStack;
 private:
   template <typename U>
   void pushImpl(U&& val);
@@ -19,7 +19,8 @@ public:
   ThreadSafeStack() = default;
   ThreadSafeStack(const ThreadSafeStack& other);
   bool empty() const;
-  std::shared_ptr<T> pop();
+  std::unique_ptr<T> pop();
+  std::unique_ptr<T> try_pop();
   void push(const T& val);
   void push(T&& val);
 };
@@ -37,29 +38,33 @@ bool ThreadSafeStack<T>::empty() const
   return mStack.empty();
 }
 template <typename T>
-std::shared_ptr<T> ThreadSafeStack<T>::pop()
+std::unique_ptr<T> ThreadSafeStack<T>::pop()
 {
   std::unique_lock lk(mLock);
   mCond.wait(lk, [this](){ return !mStack.empty(); });
-  if constexpr(std::is_nothrow_move_constructible_v<T>)
+  auto ans = std::move(mStack.top());
+  mStack.pop();
+  return ans;
+}
+template <typename T>
+std::unique_ptr<T> ThreadSafeStack<T>::try_pop()
+{
+  std::unique_lock lk(mLock);
+  if(mStack.empty())
   {
-    auto ans = std::make_shared<T>(std::move(mStack.top()));
-    mStack.pop();
-    return ans;
+    return nullptr;
   }
-  else
-  {
-    auto ans = std::make_shared<T>(mStack.top());
-    mStack.pop();
-    return ans;
-  }
+  auto ans = std::move(mStack.top());
+  mStack.pop();
+  return ans;
 }
 template <typename T>
 template <typename U>
 void ThreadSafeStack<T>::pushImpl(U&& val)
 {
+  auto elem = std::make_unique<T>(std::forward<U>(val));
   std::unique_lock lk(mLock);
-  mStack.push(std::forward<U>(val));
+  mStack.push(std::move(elem));
   mCond.notify_one();
 }
 template <typename T>

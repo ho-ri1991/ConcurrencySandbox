@@ -66,6 +66,13 @@ BOOST_AUTO_TEST_CASE(TestLockFreeStack)
       stack.push(i);
     }
   });
+  jthread push4([&](){
+    while(!start.load());
+    for(std::size_t i = 3000; i < 4000; ++i)
+    {
+      stack.push(i);
+    }
+  });
   std::promise<std::vector<int>> promise1;
   auto fut1 = promise1.get_future();
   jthread pop1([&stack, &lock, &cond, &start, promise = std::move(promise1)]() mutable {
@@ -73,7 +80,6 @@ BOOST_AUTO_TEST_CASE(TestLockFreeStack)
     std::vector<int> ans;
     for(std::size_t i = 0; i < 1000; ++i)
     {
-      std::cout << i << std::endl;
       auto p = stack.pop();
       while(!p)
       {
@@ -115,17 +121,35 @@ BOOST_AUTO_TEST_CASE(TestLockFreeStack)
     }
     promise.set_value(std::move(ans));
   });
+  std::promise<std::vector<int>> promise4;
+  auto fut4 = promise4.get_future();
+  jthread pop4([&stack, &lock, &cond, &start, promise = std::move(promise4)]() mutable {
+    while(!start.load());
+    std::vector<int> ans;
+    for(std::size_t i = 0; i < 1000; ++i)
+    {
+      auto p = stack.pop();
+      while(!p)
+      {
+        p = stack.pop();
+      }
+      ans.push_back(*p);
+    }
+    promise.set_value(std::move(ans));
+  });
   using namespace std::literals::chrono_literals;
   std::this_thread::sleep_for(1ms);
   start.store(true);
   auto vec1 = fut1.get();
   auto vec2 = fut2.get();
   auto vec3 = fut3.get();
+  auto vec4 = fut4.get();
   vec1.insert(vec1.end(), vec2.begin(), vec2.end());
   vec1.insert(vec1.end(), vec3.begin(), vec3.end());
+  vec1.insert(vec1.end(), vec4.begin(), vec4.end());
   std::sort(vec1.begin(), vec1.end());
   std::vector<int> expected;
-  for(std::size_t i = 0; i < 3000; ++i)
+  for(std::size_t i = 0; i < 4000; ++i)
   {
     expected.push_back(i);
   }

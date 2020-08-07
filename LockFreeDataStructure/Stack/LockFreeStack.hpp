@@ -3,10 +3,9 @@
 #include <atomic>
 #include <memory>
 #include <thread>
-#include <iostream>
 
 template <typename T, std::size_t Size>
-class HazardPointerArray
+class HazardPointerDomain
 {
 private:
   struct HazardPointer
@@ -19,34 +18,73 @@ private:
   class HazardPointerOwner
   {
   private:
-    HazardPointer* mPointer;
+    HazardPointer* mHazardPointer;
   public:
-    HazardPointerOwner(HazardPointerArray& arr): mPointer(nullptr)
+    HazardPointerOwner(HazardPointerDomain& arr): mHazardPointer(nullptr)
     {
       for(auto& p: arr.mArray)
       {
         std::thread::id id;
         if(p.mID.compare_exchange_strong(id, std::this_thread::get_id()))
         {
-          mPointer = &p;
+          mHazardPointer = &p;
           break;
         }
       }
-      if(!mPointer)
+      if(!mHazardPointer)
       {
         throw std::runtime_error("No hazard pointers available");
       }
     }
     ~HazardPointerOwner()
     {
-      mPointer->mPointer.store(nullptr);
-      mPointer->mID.store(std::thread::id());
+      mHazardPointer->mPointer.store(nullptr);
+      mHazardPointer->mID.store(std::thread::id());
     }
     std::atomic<T*>& getPointer()
     {
-      return mPointer->mPointer;
+      return mHazardPointer->mPointer;
     }
   };
+  class DataToReclaimList
+  {
+  public:
+    struct Node
+    {
+      T* mData;
+      Node* mNext;
+      Node(T* data): mData(data), mNext(nullptr) {}
+      ~Node() { delete mData; }
+    };
+  private:
+    std::atomic<Node*> mHead;
+  public:
+    DataToReclaimList(): mHead(nullptr) {}
+    ~DataToReclaimList()
+    {
+      auto current = mHead.load();
+      while(current)
+      {
+        auto next = current->mNext;
+        delete current;
+        current = next;
+      }
+    }
+    void append(T* data)
+    {
+      append(new Node(data));
+    }
+    void append(Node* node)
+    {
+      node->mNext = mHead.load();
+      while(!mHead.compare_exchange_weak(node->mNext, node));
+    }
+    Node* getHead()
+    {
+      return mHead.exchange(nullptr);
+    }
+  };
+  DataToReclaimList mDeleteList;
 public:
   std::atomic<T*>& getHazardPointerForCurrentThread()
   {
@@ -64,44 +102,23 @@ public:
     }
     return false;
   }
-};
-template <typename T>
-class DataToReclaimList
-{
-private:
-  struct Node
-  {
-    T* mData;
-    Node* mNext;
-    Node(T* data): mData(data), mNext(nullptr) {}
-    ~Node() { delete mData; }
-  };
-  std::atomic<Node*> mHead;
-  void append(Node* node)
-  {
-    node->mNext = mHead.load();
-    while(!mHead.compare_exchange_weak(node->mNext, node));
-  }
-public:
-  DataToReclaimList(): mHead(nullptr) {}
   void reclaimLater(T* data)
   {
-    append(new Node(data));
+    mDeleteList.append(data);
   }
-  template <std::size_t Size>
-  void deleteNodesWithoutHazard(HazardPointerArray<T, Size>& arr)
+  void deleteNodesWithoutHazard()
   {
-    auto current = mHead.exchange(nullptr);
+    auto current = mDeleteList.getHead();
     while(current)
     {
       auto next = current->mNext;
-      if(!arr.outstandingHazardPointersFor(current->mData))
+      if(!outstandingHazardPointersFor(current->mData))
       {
         delete current;
       }
       else
       {
-        append(current);
+        mDeleteList.append(current);
       }
       current = next;
     }
@@ -119,8 +136,7 @@ private:
     Node(const T& val): mData(std::make_shared<T>(val)), mNext(nullptr) {}
   };
   std::atomic<Node*> mHead;
-  HazardPointerArray<Node, 64> mHazardPointers;
-  DataToReclaimList<Node> mDeleteList;
+  HazardPointerDomain<Node, 64> mHazardPointerDomain;
 public:
   LockFreeStack();
   ~LockFreeStack();
@@ -151,7 +167,7 @@ void LockFreeStack<T>::push(const T& val)
 template <typename T>
 std::shared_ptr<T> LockFreeStack<T>::pop()
 {
-  auto& hazardPointer = mHazardPointers.getHazardPointerForCurrentThread();
+  auto& hazardPointer = mHazardPointerDomain.getHazardPointerForCurrentThread();
   Node* oldHead;
   do
   {
@@ -172,15 +188,15 @@ std::shared_ptr<T> LockFreeStack<T>::pop()
   {
     using std::swap;
     swap(ans, oldHead->mData);
-    if(!mHazardPointers.outstandingHazardPointersFor(oldHead))
+    if(!mHazardPointerDomain.outstandingHazardPointersFor(oldHead))
     {
       delete oldHead;
     }
     else
     {
-      mDeleteList.reclaimLater(oldHead);
+      mHazardPointerDomain.reclaimLater(oldHead);
     }
-    mDeleteList.deleteNodesWithoutHazard(mHazardPointers);
+    mHazardPointerDomain.deleteNodesWithoutHazard();
   }
   return ans;
 }

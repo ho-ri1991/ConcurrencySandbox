@@ -39,10 +39,36 @@ public:
 
 BOOST_AUTO_TEST_CASE(TestFixedSizeThreadSafeHashMap)
 {
-  FixedSizeThreadSafeHashMap<std::string, int> map;
-  map.addOrUpdate("a", 0);
-  map.find("a");
-  map.remove("a");
-  auto snap = map.getSnapShot();
+  FixedSizeThreadSafeHashMap<int, int> map;
+  jthread add1([&map]{
+    for(int i = 0; i < 100; ++i)
+    {
+      map.addOrUpdate(i, i);
+    }
+  });
+  jthread add2([&map]{
+    for(int i = 100; i < 200; ++i)
+    {
+      map.addOrUpdate(i, i);
+    }
+  });
+  jthread find1([&map]{
+    for(int i = 0; i < 200; ++i)
+    {
+      if(!map.find(i))
+      {
+        continue;
+      }
+    }
+  });
+  jthread find2([&map]{
+    for(int i = 0; i < 200; ++i)
+    {
+      if(!map.find(i))
+      {
+        continue;
+      }
+    }
+  });
 }
 

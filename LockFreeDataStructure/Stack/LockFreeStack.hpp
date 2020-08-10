@@ -3,11 +3,7 @@
 #include <atomic>
 #include <memory>
 #include <thread>
-
-template <typename T>
-struct DataToReclaim
-{
-};
+#include <iostream>
 
 template <typename T, std::size_t Size>
 class HazardPointerArray
@@ -17,6 +13,7 @@ private:
   {
     std::atomic<std::thread::id> mID;
     std::atomic<T*> mPointer;
+    HazardPointer(): mID(std::thread::id()), mPointer(nullptr) {}
   };
   HazardPointer mArray[Size];
   class HazardPointerOwner
@@ -32,6 +29,7 @@ private:
         if(p.mID.compare_exchange_strong(id, std::this_thread::get_id()))
         {
           mPointer = &p;
+          break;
         }
       }
       if(!mPointer)
@@ -41,19 +39,19 @@ private:
     }
     ~HazardPointerOwner()
     {
-      mPointer->mPointer.load(nullptr);
-      mPointer->mID.load(std::thread::id());
+      mPointer->mPointer.store(nullptr);
+      mPointer->mID.store(std::thread::id());
     }
     std::atomic<T*>& getPointer()
     {
       return mPointer->mPointer;
     }
-  }
+  };
 public:
   std::atomic<T*>& getHazardPointerForCurrentThread()
   {
-    static thread_local threadOwner(*this);
-    return threadOwner.getPointer();
+    static thread_local HazardPointerOwner hpOwner(*this);
+    return hpOwner.getPointer();
   }
   bool outstandingHazardPointersFor(T* pointer)
   {
@@ -96,7 +94,7 @@ public:
     while(current)
     {
       auto next = current->mNext;
-      if(!arr.outstandingHazardPointersFor(current))
+      if(!arr.outstandingHazardPointersFor(current->mData))
       {
         delete current;
       }
@@ -120,8 +118,8 @@ private:
     Node(const T& val): mData(std::make_shared<T>(val)), mNext(nullptr) {}
   };
   std::atomic<Node*> mHead;
-  HazardPointerArray<T, 64> mHazardPointers;
-  DataToReclaim<Node> mDeleteList;
+  HazardPointerArray<Node, 64> mHazardPointers;
+  DataToReclaimList<Node> mDeleteList;
 public:
   LockFreeStack();
   ~LockFreeStack();
@@ -137,7 +135,7 @@ LockFreeStack<T>::~LockFreeStack()
   auto node = mHead.load();
   while(node)
   {
-    auto next = node->mNext.load();
+    auto next = node->mNext;
     delete node;
     node = next;
   }
@@ -147,10 +145,42 @@ void LockFreeStack<T>::push(const T& val)
 {
   auto node = new Node(val);
   node->mNext = mHead.load();
-  while(!mHead.cmopare_exchange_weak(node->mNext, node));
+  while(!mHead.compare_exchange_weak(node->mNext, node));
 }
 template <typename T>
 std::shared_ptr<T> LockFreeStack<T>::pop()
 {
+  auto& hazardPointer = mHazardPointers.getHazardPointerForCurrentThread();
+  Node* oldHead;
+  do
+  {
+    Node* temp;
+    do
+    {
+      oldHead = mHead.load();
+      hazardPointer.store(oldHead);
+      temp = mHead.load();
+    }
+    while(oldHead != temp);
+  }
+  while(oldHead && !mHead.compare_exchange_strong(oldHead, oldHead->mNext));
+  hazardPointer.store(nullptr);
+  
+  std::shared_ptr<T> ans;
+  if(oldHead)
+  {
+    using std::swap;
+    swap(ans, oldHead->mData);
+    if(!mHazardPointers.outstandingHazardPointersFor(oldHead))
+    {
+      delete oldHead;
+    }
+    else
+    {
+      mDeleteList.reclaimLater(oldHead);
+    }
+    mDeleteList.deleteNodesWithoutHazard(mHazardPointers);
+  }
+  return ans;
 }
 

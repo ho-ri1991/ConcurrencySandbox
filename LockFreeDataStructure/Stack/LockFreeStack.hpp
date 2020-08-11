@@ -80,9 +80,10 @@ private:
   void append(Node* node)
   {
     node->mNext = mHead.load();
-    while(!mHead.compare_exchange_strong(node->mNext, node));
+    while(!mHead.compare_exchange_weak(node->mNext, node));
   }
 public:
+  DataToReclaimList(): mHead(nullptr) {}
   void reclaimLater(T* data)
   {
     append(new Node(data));

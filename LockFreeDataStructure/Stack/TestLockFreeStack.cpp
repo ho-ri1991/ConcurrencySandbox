@@ -41,7 +41,8 @@ public:
 
 BOOST_AUTO_TEST_CASE(TestLockFreeStack)
 {
-  LockFreeStack<int> stack;
+  LockFreeStack<int> stack1;
+  LockFreeStack<int> stack2;
   std::mutex lock;
   std::condition_variable cond;
   std::atomic<bool> start = false;
@@ -49,41 +50,89 @@ BOOST_AUTO_TEST_CASE(TestLockFreeStack)
     while(!start.load());
     for(std::size_t i = 0; i < 1000; ++i)
     {
-      stack.push(i);
+      stack1.push(i);
     }
   });
   jthread push2([&](){
     while(!start.load());
     for(std::size_t i = 1000; i < 2000; ++i)
     {
-      stack.push(i);
+      stack1.push(i);
     }
   });
   jthread push3([&](){
     while(!start.load());
     for(std::size_t i = 2000; i < 3000; ++i)
     {
-      stack.push(i);
+      stack1.push(i);
     }
   });
   jthread push4([&](){
     while(!start.load());
     for(std::size_t i = 3000; i < 4000; ++i)
     {
-      stack.push(i);
+      stack1.push(i);
+    }
+  });
+  jthread popAndPush1([&](){
+    while(!start.load());
+    for(std::size_t i = 0; i < 1000; ++i)
+    {
+      auto p = stack1.pop();
+      while(!p)
+      {
+        p = stack1.pop();
+      }
+      stack2.push(*p);
+    }
+  });
+  jthread popAndPush2([&](){
+    while(!start.load());
+    for(std::size_t i = 0; i < 1000; ++i)
+    {
+      auto p = stack1.pop();
+      while(!p)
+      {
+        p = stack1.pop();
+      }
+      stack2.push(*p);
+    }
+  });
+  jthread popAndPush3([&](){
+    while(!start.load());
+    for(std::size_t i = 0; i < 1000; ++i)
+    {
+      auto p = stack1.pop();
+      while(!p)
+      {
+        p = stack1.pop();
+      }
+      stack2.push(*p);
+    }
+  });
+  jthread popAndPush4([&](){
+    while(!start.load());
+    for(std::size_t i = 0; i < 1000; ++i)
+    {
+      auto p = stack1.pop();
+      while(!p)
+      {
+        p = stack1.pop();
+      }
+      stack2.push(*p);
     }
   });
   std::promise<std::vector<int>> promise1;
   auto fut1 = promise1.get_future();
-  jthread pop1([&stack, &lock, &cond, &start, promise = std::move(promise1)]() mutable {
+  jthread pop1([&stack2, &lock, &cond, &start, promise = std::move(promise1)]() mutable {
     while(!start.load());
     std::vector<int> ans;
     for(std::size_t i = 0; i < 1000; ++i)
     {
-      auto p = stack.pop();
+      auto p = stack2.pop();
       while(!p)
       {
-        p = stack.pop();
+        p = stack2.pop();
       }
       ans.push_back(*p);
     }
@@ -91,15 +140,15 @@ BOOST_AUTO_TEST_CASE(TestLockFreeStack)
   });
   std::promise<std::vector<int>> promise2;
   auto fut2 = promise2.get_future();
-  jthread pop2([&stack, &lock, &cond, &start, promise = std::move(promise2)]() mutable {
+  jthread pop2([&stack2, &lock, &cond, &start, promise = std::move(promise2)]() mutable {
     while(!start.load());
     std::vector<int> ans;
     for(std::size_t i = 0; i < 1000; ++i)
     {
-      auto p = stack.pop();
+      auto p = stack2.pop();
       while(!p)
       {
-        p = stack.pop();
+        p = stack2.pop();
       }
       ans.push_back(*p);
     }
@@ -107,15 +156,15 @@ BOOST_AUTO_TEST_CASE(TestLockFreeStack)
   });
   std::promise<std::vector<int>> promise3;
   auto fut3 = promise3.get_future();
-  jthread pop3([&stack, &lock, &cond, &start, promise = std::move(promise3)]() mutable {
+  jthread pop3([&stack2, &lock, &cond, &start, promise = std::move(promise3)]() mutable {
     while(!start.load());
     std::vector<int> ans;
     for(std::size_t i = 0; i < 1000; ++i)
     {
-      auto p = stack.pop();
+      auto p = stack2.pop();
       while(!p)
       {
-        p = stack.pop();
+        p = stack2.pop();
       }
       ans.push_back(*p);
     }
@@ -123,15 +172,15 @@ BOOST_AUTO_TEST_CASE(TestLockFreeStack)
   });
   std::promise<std::vector<int>> promise4;
   auto fut4 = promise4.get_future();
-  jthread pop4([&stack, &lock, &cond, &start, promise = std::move(promise4)]() mutable {
+  jthread pop4([&stack2, &lock, &cond, &start, promise = std::move(promise4)]() mutable {
     while(!start.load());
     std::vector<int> ans;
     for(std::size_t i = 0; i < 1000; ++i)
     {
-      auto p = stack.pop();
+      auto p = stack2.pop();
       while(!p)
       {
-        p = stack.pop();
+        p = stack2.pop();
       }
       ans.push_back(*p);
     }

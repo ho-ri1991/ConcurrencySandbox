@@ -26,6 +26,7 @@ LINK_DIRECTORIES(${Boost_LIBRARY_DIRS})
 
 ADD_EXECUTABLE(test_lockfreestack
   TestLockFreeStack.cpp
+  LockFreeStack.cpp
 )
 
 TARGET_LINK_LIBRARIES(test_lockfreestack

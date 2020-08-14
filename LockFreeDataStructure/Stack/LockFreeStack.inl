@@ -6,13 +6,10 @@ void HazardPointerDomain::appendToLocalDeleteList(void* data, Deleter deleter)
 template <typename Deleter>
 void HazardPointerDomain::retire(void* data, Deleter deleter) 
 {
-  if(isHazardous(data))
+  appendToLocalDeleteList(data, deleter);
+  if(2 * sNumHazardPointer.load() < sLocalDeleteList.size())
   {
-    appendToLocalDeleteList(data, deleter);
-  }
-  else
-  {
-    deleter(data);
+    tryDeallocateLocalList();
   }
 }
 
@@ -66,7 +63,6 @@ std::shared_ptr<T> LockFreeStack<T>::pop()
     using std::swap;
     swap(ans, oldHead->mData);
     HazardPointerDomain::retire(oldHead, &LockFreeStack::deleteNode);
-    HazardPointerDomain::tryDeallocateLocalList();
   }
   return ans;
 }

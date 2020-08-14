@@ -5,6 +5,7 @@
 #include <memory>
 #include <thread>
 #include <functional>
+#include <iostream>
 
 class HazardPointerDomain
 {
@@ -44,6 +45,11 @@ private:
         cur = next;
       }
     }
+    void append(ListNode* head, ListNode* last)
+    {
+      last->mNext = mHead.load();
+      while(!mHead.compare_exchange_weak(last->mNext, head));
+    }
     void append(ListNode* node)
     {
       node->mNext = mHead.load();
@@ -69,7 +75,12 @@ private:
     {
       if(mHead)
       {
-        HazardPointerDomain::sGlobalDeleteList.append(mHead);
+        auto last = mHead;
+        while(last->mNext)
+        {
+          last = last->mNext;
+        }
+        HazardPointerDomain::sGlobalDeleteList.append(mHead, last);
       }
     }
     template <typename Deleter>
@@ -92,6 +103,10 @@ private:
       mSize = 0;
       return ans;
     }
+    std::size_t size() const noexcept
+    {
+      return mSize;
+    }
   };
   class HazardPointerOwner
   {
@@ -113,6 +128,7 @@ private:
       {
         throw std::runtime_error("No hazard pointers available");
       }
+      HazardPointerDomain::sNumHazardPointer.fetch_add(1);
     }
     ~HazardPointerOwner()
     {
@@ -126,6 +142,7 @@ private:
   };
   static constexpr std::size_t sArraySize = 64;
   static std::array<PointerWithThreadID, sArraySize> sPointerWithThreadID;
+  static std::atomic<std::size_t> sNumHazardPointer;
   static GlobalDeleteList sGlobalDeleteList;
   static thread_local LocalDeleteList sLocalDeleteList;
   static thread_local HazardPointerOwner sHazardPointerOwner;

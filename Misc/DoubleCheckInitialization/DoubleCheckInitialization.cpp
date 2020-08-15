@@ -45,7 +45,7 @@ void doSomething()
   if(!gInitFlag.load(std::memory_order_acquire))
   {
     std::lock_guard lk(gLock);
-    if(!gInitFlag.load(std::memory_order_relaxed)) // this is a relaxed operation because mutex operation synchronize
+    if(!gInitFlag.load(std::memory_order_relaxed)) // we can use a relaxed operation because mutex operation act as a barrier
     {
       gData = std::make_unique<SomeData>();
       gInitFlag.store(true, std::memory_order_release);

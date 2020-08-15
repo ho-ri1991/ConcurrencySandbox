@@ -7,7 +7,7 @@ template <typename Deleter>
 void HazardPointerDomain::retire(void* data, Deleter deleter) 
 {
   appendToLocalDeleteList(data, deleter);
-  if(2 * sNumHazardPointer.load() < sLocalDeleteList.size())
+  if(2 * sHazardPointerList.size() < sLocalDeleteList.size())
   {
     tryDeallocateLocalList();
   }

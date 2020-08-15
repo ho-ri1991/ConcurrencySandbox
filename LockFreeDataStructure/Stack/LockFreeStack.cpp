@@ -1,22 +1,10 @@
 #include "LockFreeStack.hpp"
 
-std::array<HazardPointerDomain::PointerWithThreadID, HazardPointerDomain::sArraySize> HazardPointerDomain::sPointerWithThreadID;
+HazardPointerDomain::HazardPointerList HazardPointerDomain::sHazardPointerList;
 HazardPointerDomain::GlobalDeleteList HazardPointerDomain::sGlobalDeleteList;
-std::atomic<std::size_t> HazardPointerDomain::sNumHazardPointer(0);
 thread_local HazardPointerDomain::LocalDeleteList HazardPointerDomain::sLocalDeleteList;
 thread_local HazardPointerDomain::HazardPointerOwner HazardPointerDomain::sHazardPointerOwner;
 
-bool HazardPointerDomain::isHazardous(void* data)
-{
-  for(auto& p: sPointerWithThreadID)
-  {
-    if(p.mPointer.load() == data)
-    {
-      return true;
-    }
-  }
-  return false;
-}
 std::atomic<void*>& HazardPointerDomain::getHazardPointerForCurrentThread()
 {
   return sHazardPointerOwner.getPointer();
@@ -37,12 +25,7 @@ void HazardPointerDomain::tryDeallocateLocalList()
       }
     }
   }
-  std::vector<void*> arr;
-  arr.reserve(sNumHazardPointer.load());
-  for(auto& p: sPointerWithThreadID)
-  {
-    arr.push_back(p.mPointer.load());
-  }
+  auto arr = sHazardPointerList.getPointers();
   auto cur = sLocalDeleteList.resetHead();
   while(cur)
   {

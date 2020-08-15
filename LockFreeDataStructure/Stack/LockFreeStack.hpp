@@ -16,15 +16,63 @@ private:
     std::atomic<void*> mPointer;
     PointerWithThreadID(): mID(std::thread::id()), mPointer(nullptr){}
   };
-  std::vector<PointerWithThreadID> mPointers;
-  struct ListNode
+  struct HazardPointerListNode
+  {
+    std::atomic<void*> mPointer;
+    HazardPointerListNode* mNext;
+    HazardPointerListNode(): mPointer(nullptr), mNext(nullptr) {}
+  };
+  class HazardPointerList
+  {
+  private:
+    std::atomic<HazardPointerListNode*> mHead;
+    std::atomic<std::size_t> mSize;
+  public:
+    HazardPointerList(): mHead(nullptr), mSize(0) {}
+    ~HazardPointerList()
+    {
+      auto cur = mHead.load();
+      if(cur)
+      {
+        while(cur)
+        {
+          auto next = cur->mNext;
+          delete cur;
+          cur = next;
+        }
+      }
+    }
+    std::vector<void*> getPointers()
+    {
+      std::vector<void*> ans;
+      ans.reserve(mSize.load());
+      auto cur = mHead.load();
+      while(cur)
+      {
+        ans.push_back(cur->mPointer.load());
+        cur = cur->mNext;
+      }
+      return ans;
+    }
+    void append(HazardPointerListNode* node)
+    {
+      node->mNext = mHead.load();
+      while(!mHead.compare_exchange_weak(node->mNext, node));
+      mSize.fetch_add(1);
+    }
+    std::size_t size() const noexcept
+    {
+      return mSize.load();
+    }
+  };
+  struct DeleteListNode
   {
     void* mData;
-    ListNode* mNext;
+    DeleteListNode* mNext;
     std::function<void(void*)> mDeleter;
     template <typename Deleter>
-    explicit ListNode(void* data, Deleter deleter): mData(data), mNext(nullptr), mDeleter(deleter) {}
-    ~ListNode()
+    explicit DeleteListNode(void* data, Deleter deleter): mData(data), mNext(nullptr), mDeleter(deleter) {}
+    ~DeleteListNode()
     {
       mDeleter(mData);
     }
@@ -32,7 +80,7 @@ private:
   class GlobalDeleteList
   {
   private:
-    std::atomic<ListNode*> mHead;
+    std::atomic<DeleteListNode*> mHead;
   public:
     GlobalDeleteList(): mHead(nullptr) {}
     ~GlobalDeleteList()
@@ -45,21 +93,21 @@ private:
         cur = next;
       }
     }
-    void append(ListNode* head, ListNode* last)
+    void append(DeleteListNode* head, DeleteListNode* last)
     {
       last->mNext = mHead.load();
       while(!mHead.compare_exchange_weak(last->mNext, head));
     }
-    void append(ListNode* node)
+    void append(DeleteListNode* node)
     {
       node->mNext = mHead.load();
       while(!mHead.compare_exchange_weak(node->mNext, node));
     }
-    ListNode* resetHead()
+    DeleteListNode* resetHead()
     {
       return mHead.exchange(nullptr);
     }
-    ListNode* loadHead()
+    DeleteListNode* loadHead()
     {
       return mHead.load();
     }
@@ -67,7 +115,7 @@ private:
   class LocalDeleteList
   {
   private:
-    ListNode* mHead;
+    DeleteListNode* mHead;
     std::size_t mSize;
   public:
     LocalDeleteList(): mHead(nullptr), mSize(0) {}
@@ -86,17 +134,17 @@ private:
     template <typename Deleter>
     void append(void* data, Deleter deleter)
     {
-      auto node = std::make_unique<ListNode>(data, deleter);
+      auto node = std::make_unique<DeleteListNode>(data, deleter);
       append(node.get());
       node.release();
     }
-    void append(ListNode* node)
+    void append(DeleteListNode* node)
     {
       mSize++;
       node->mNext = mHead;
       mHead = node;
     }
-    ListNode* resetHead()
+    DeleteListNode* resetHead()
     {
       auto ans = mHead;
       mHead = nullptr;
@@ -111,38 +159,25 @@ private:
   class HazardPointerOwner
   {
   private:
-    PointerWithThreadID* mPointerWithThreadID;
+    std::atomic<void*>* mPointer;
   public:
-    HazardPointerOwner(): mPointerWithThreadID(nullptr)
+    HazardPointerOwner(): mPointer(nullptr)
     {
-      for(auto& p: sPointerWithThreadID)
-      {
-        std::thread::id id;
-        if(p.mID.compare_exchange_strong(id, std::this_thread::get_id()))
-        {
-          mPointerWithThreadID = &p;
-          break;
-        }
-      }
-      if(!mPointerWithThreadID)
-      {
-        throw std::runtime_error("No hazard pointers available");
-      }
-      HazardPointerDomain::sNumHazardPointer.fetch_add(1);
+      auto node = std::make_unique<HazardPointerListNode>();
+      mPointer = &node->mPointer;
+      sHazardPointerList.append(node.get());
+      node.release();
     }
     ~HazardPointerOwner()
     {
-      mPointerWithThreadID->mID.store(std::thread::id());
-      mPointerWithThreadID->mPointer.store(nullptr);
+      mPointer->store(nullptr);
     }
     std::atomic<void*>& getPointer()
     {
-      return mPointerWithThreadID->mPointer;
+      return *mPointer;
     }
   };
-  static constexpr std::size_t sArraySize = 64;
-  static std::array<PointerWithThreadID, sArraySize> sPointerWithThreadID;
-  static std::atomic<std::size_t> sNumHazardPointer;
+  static HazardPointerList sHazardPointerList;
   static GlobalDeleteList sGlobalDeleteList;
   static thread_local LocalDeleteList sLocalDeleteList;
   static thread_local HazardPointerOwner sHazardPointerOwner;
@@ -152,7 +187,6 @@ private:
   HazardPointerDomain& operator=(const HazardPointerDomain&) = delete;
   HazardPointerDomain& operator=(HazardPointerDomain&&) = delete;
   ~HazardPointerDomain() = delete;
-  static bool isHazardous(void* data);
   template <typename Deleter>
   static void appendToLocalDeleteList(void* data, Deleter deleter);
 public:

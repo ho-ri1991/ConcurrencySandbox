@@ -11,7 +11,8 @@ std::atomic<void*>& HazardPointerDomain::getHazardPointerForCurrentThread()
 }
 void HazardPointerDomain::tryDeallocateLocalList()
 {
-  if(sGlobalDeleteList.loadHead())
+  // we do not have to collect nodes in the global list right away.
+  if(sGlobalDeleteList.loadHead(std::memory_order_relaxed))
   {
     auto globalHead = sGlobalDeleteList.resetHead();
     if(globalHead)

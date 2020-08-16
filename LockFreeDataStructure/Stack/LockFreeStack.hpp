@@ -10,12 +10,6 @@
 class HazardPointerDomain
 {
 private:
-  struct PointerWithThreadID
-  {
-    std::atomic<std::thread::id> mID;
-    std::atomic<void*> mPointer;
-    PointerWithThreadID(): mID(std::thread::id()), mPointer(nullptr){}
-  };
   struct HazardPointerListNode
   {
     std::atomic<void*> mPointer;
@@ -25,13 +19,13 @@ private:
   class HazardPointerList
   {
   private:
-    std::atomic<HazardPointerListNode*> mHead;
-    std::atomic<std::size_t> mSize;
+    std::atomic<HazardPointerListNode*> mHead; // operation on mHead have to be memory_order_seq_cst to get the latest value by load operation, otherwise some threads may miss hazard pointer of another thread by reading old head.
+    std::atomic<int> mSize; // this is a supplementary variable to determine when to reclaim memory.
   public:
     HazardPointerList(): mHead(nullptr), mSize(0) {}
     ~HazardPointerList()
     {
-      auto cur = mHead.load();
+      auto cur = mHead.load(std::memory_order_seq_cst);
       if(cur)
       {
         while(cur)
@@ -45,24 +39,24 @@ private:
     std::vector<void*> getPointers()
     {
       std::vector<void*> ans;
-      ans.reserve(mSize.load());
-      auto cur = mHead.load();
+      ans.reserve(mSize.load(std::memory_order_relaxed));
+      auto cur = mHead.load(std::memory_order_seq_cst);
       while(cur)
       {
-        ans.push_back(cur->mPointer.load());
+        ans.push_back(cur->mPointer.load(std::memory_order_seq_cst));
         cur = cur->mNext;
       }
       return ans;
     }
     void append(HazardPointerListNode* node)
     {
-      node->mNext = mHead.load();
-      while(!mHead.compare_exchange_weak(node->mNext, node));
-      mSize.fetch_add(1);
+      node->mNext = mHead.load(std::memory_order_relaxed);
+      mSize.fetch_add(1, std::memory_order_relaxed);
+      while(!mHead.compare_exchange_weak(node->mNext, node, std::memory_order_seq_cst, std::memory_order_relaxed));
     }
-    std::size_t size() const noexcept
+    int size() const noexcept
     {
-      return mSize.load();
+      return mSize.load(std::memory_order_relaxed);
     }
   };
   struct DeleteListNode
@@ -85,7 +79,7 @@ private:
     GlobalDeleteList(): mHead(nullptr) {}
     ~GlobalDeleteList()
     {
-      auto cur = mHead.load();
+      auto cur = resetHead();
       while(cur)
       {
         auto next = cur->mNext;
@@ -95,28 +89,27 @@ private:
     }
     void append(DeleteListNode* head, DeleteListNode* last)
     {
-      last->mNext = mHead.load();
-      while(!mHead.compare_exchange_weak(last->mNext, head));
+      last->mNext = mHead.load(std::memory_order_relaxed);
+      while(!mHead.compare_exchange_weak(last->mNext, head, std::memory_order_release, std::memory_order_relaxed));
     }
     void append(DeleteListNode* node)
     {
-      node->mNext = mHead.load();
-      while(!mHead.compare_exchange_weak(node->mNext, node));
+      append(node, node);
     }
     DeleteListNode* resetHead()
     {
-      return mHead.exchange(nullptr);
+      return mHead.exchange(nullptr, std::memory_order_acquire);
     }
-    DeleteListNode* loadHead()
+    DeleteListNode* loadHead(std::memory_order order)
     {
-      return mHead.load();
+      return mHead.load(order);
     }
   };
   class LocalDeleteList
   {
   private:
     DeleteListNode* mHead;
-    std::size_t mSize;
+    int mSize;
   public:
     LocalDeleteList(): mHead(nullptr), mSize(0) {}
     ~LocalDeleteList()
@@ -151,7 +144,7 @@ private:
       mSize = 0;
       return ans;
     }
-    std::size_t size() const noexcept
+    int size() const noexcept
     {
       return mSize;
     }
@@ -170,7 +163,7 @@ private:
     }
     ~HazardPointerOwner()
     {
-      mPointer->store(nullptr);
+      mPointer->store(nullptr, std::memory_order_seq_cst);
     }
     std::atomic<void*>& getPointer()
     {
@@ -178,6 +171,7 @@ private:
     }
   };
   static HazardPointerList sHazardPointerList;
+  // TODO: global delete list have to be destructed after local delete list because the destructor of local delete list moves its nodes to the global list. We cannot delete the nodes in the local list in general because other threads may be still using the node.
   static GlobalDeleteList sGlobalDeleteList;
   static thread_local LocalDeleteList sLocalDeleteList;
   static thread_local HazardPointerOwner sHazardPointerOwner;
@@ -206,7 +200,7 @@ private:
     Node* mNext;
     Node(const T& val): mData(std::make_shared<T>(val)), mNext(nullptr) {}
   };
-  std::atomic<Node*> mHead;
+  std::atomic<Node*> mHead; // operation on this variable have to be memory_order_seq_cst to use hazard pointer
   static void deleteNode(void* node);
 public:
   LockFreeStack();

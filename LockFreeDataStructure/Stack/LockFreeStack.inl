@@ -23,7 +23,7 @@ LockFreeStack<T>::LockFreeStack(): mHead(nullptr) {}
 template <typename T>
 LockFreeStack<T>::~LockFreeStack()
 {
-  auto node = mHead.load();
+  auto node = mHead.load(std::memory_order_seq_cst);
   while(node)
   {
     auto next = node->mNext;
@@ -36,7 +36,7 @@ void LockFreeStack<T>::push(const T& val)
 {
   auto node = new Node(val);
   node->mNext = mHead.load();
-  while(!mHead.compare_exchange_weak(node->mNext, node));
+  while(!mHead.compare_exchange_weak(node->mNext, node, std::memory_order_seq_cst, std::memory_order_relaxed));
 }
 template <typename T>
 std::shared_ptr<T> LockFreeStack<T>::pop()
@@ -48,14 +48,14 @@ std::shared_ptr<T> LockFreeStack<T>::pop()
     Node* temp;
     do
     {
-      oldHead = mHead.load();
+      oldHead = mHead.load(std::memory_order_seq_cst);
       hazardPointer.store(oldHead);
-      temp = mHead.load();
+      temp = mHead.load(std::memory_order_seq_cst);
     }
     while(oldHead != temp);
   }
-  while(oldHead && !mHead.compare_exchange_strong(oldHead, oldHead->mNext));
-  hazardPointer.store(nullptr);
+  while(oldHead && !mHead.compare_exchange_strong(oldHead, oldHead->mNext, std::memory_order_seq_cst, std::memory_order_relaxed));
+  hazardPointer.store(nullptr, std::memory_order_seq_cst);
   
   std::shared_ptr<T> ans;
   if(oldHead)

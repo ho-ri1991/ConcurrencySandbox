@@ -1,7 +1,10 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <memory>
+#include <vector>
+#include <iostream>
 
 class HazardPointerDomain
 {
@@ -219,6 +222,12 @@ private:
   std::atomic<Node*> mTail;
   static void deleteNode(void* node);
 public:
+  MSQueue();
+  ~MSQueue();
+  MSQueue(const MSQueue&) = delete;
+  MSQueue(MSQueue&&) = delete;
+  MSQueue& operator=(const MSQueue&) = delete;
+  MSQueue& operator=(MSQueue&&) = delete;
   void push(const T& data);
   std::unique_ptr<T> tryPop();
 };
@@ -227,6 +236,22 @@ template <typename T>
 void MSQueue<T>::deleteNode(void* node)
 {
   delete reinterpret_cast<Node*>(node);
+}
+
+template <typename T>
+MSQueue<T>::MSQueue(): mHead(new Node()), mTail(mHead.load()) {}
+
+template <typename T>
+MSQueue<T>::~MSQueue()
+{
+  auto node = mHead.load();
+  while(node)
+  {
+    auto next = node->mNext.load();
+    delete node->mData.load();
+    delete node;
+    node = next;
+  }
 }
 
 template <typename T>
@@ -300,10 +325,10 @@ std::unique_ptr<T> MSQueue<T>::tryPop()
       tmp = mHead.load();
     }
     while(head != tmp);
-    auto next = head->mNext;
+    auto next = head->mNext.load();
     if(mHead.compare_exchange_strong(head, next))
     {
-      std::unique_ptr ans(head->mData);
+      std::unique_ptr<T> ans(head->mData);
       hp.release();
       HazardPointerDomain::retire(head, &deleteNode);
       return ans;

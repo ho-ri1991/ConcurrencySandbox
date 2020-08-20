@@ -1,4 +1,4 @@
-#include "MSQueue.h"
+#include "MSQueue.hpp"
 
 HazardPointerDomain::HazardPointerList HazardPointerDomain::sHazardPointerList;
 HazardPointerDomain::GlobalDeleteList HazardPointerDomain::sGlobalDeleteList;

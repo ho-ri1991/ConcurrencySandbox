@@ -2,6 +2,7 @@
 #define BOOST_TEST_MAIN
 
 #include <boost/test/unit_test.hpp>
+#include <algorithm>
 #include <thread>
 #include <chrono>
 #include <string>
@@ -9,7 +10,9 @@
 #include <vector>
 #include <random>
 #include <mutex>
+#include <limits>
 #include <condition_variable>
+#include <unordered_set>
 #include "ParallelAlgorithm.hpp"
 
 BOOST_AUTO_TEST_CASE(TestParallelForEach)
@@ -27,5 +30,28 @@ BOOST_AUTO_TEST_CASE(TestParallelForEach)
     expected.push_back(2 * i);
   }
   BOOST_CHECK_EQUAL_COLLECTIONS(output.begin(), output.end(), expected.begin(), expected.end());
+}
+
+BOOST_AUTO_TEST_CASE(TestParallelFind)
+{
+  std::size_t len = 10000;
+  std::random_device rnd;
+  std::mt19937 engine(rnd());
+  std::uniform_int_distribution<long long> dist(0, std::numeric_limits<long long>::max());
+  for(std::size_t i = 0; i < 10; ++i)
+  {
+    std::vector<long long> vec(len);
+    std::unordered_set<long long> s;
+    for(auto& val: vec)
+    {
+      val = dist(engine);
+      s.insert(val);
+    }
+    BOOST_CHECK_EQUAL(
+      *parallel_find(vec.begin(), vec.end(), *s.begin()),
+      *std::find(vec.begin(), vec.end(), *s.begin())
+    );
+    BOOST_CHECK(parallel_find(vec.begin(), vec.end(), -1) == std::find(vec.begin(), vec.end(), -1));
+  }
 }
 

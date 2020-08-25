@@ -34,7 +34,7 @@ TARGET_LINK_LIBRARIES(test_paralelalgorithm
 )
 
 ADD_TEST(
-  NAME TestParallelForEach
+  NAME TestParallelAlgorithm
   COMMAND $<TARGET_FILE:test_paralelalgorithm> --log_level=message
 )
 

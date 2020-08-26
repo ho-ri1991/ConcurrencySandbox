@@ -55,3 +55,25 @@ BOOST_AUTO_TEST_CASE(TestParallelFind)
   }
 }
 
+BOOST_AUTO_TEST_CASE(TestParallelPartialSum)
+{
+  std::size_t len = 10000;
+  std::random_device rnd;
+  std::mt19937 engine(rnd());
+  std::uniform_int_distribution<long long> dist(-1000, 1000);
+  for(std::size_t i = 0; i < 10; ++i)
+  {
+    std::vector<long long> vec(len);
+    for(auto& val: vec)
+    {
+      val = dist(engine);
+      std::cout << val << ",";
+    }
+    std::cout << std::endl;
+    std::vector<long long> expected;
+    std::partial_sum(vec.begin(), vec.end(), std::back_inserter(expected));
+    parallel_partial_sum(vec.begin(), vec.end());
+    BOOST_CHECK_EQUAL_COLLECTIONS(vec.begin(), vec.end(), expected.begin(), expected.end());
+  }
+}
+

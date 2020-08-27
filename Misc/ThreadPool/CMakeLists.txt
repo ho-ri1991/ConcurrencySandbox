@@ -25,6 +25,7 @@ INCLUDE_DIRECTORIES(AFTER SYSTEM ${Boost_INCLUDE_DIR})
 LINK_DIRECTORIES(${Boost_LIBRARY_DIRS})
 
 ADD_EXECUTABLE(test_threadpool
+  ThreadPool.cpp
   TestThreadPool.cpp
 )
 

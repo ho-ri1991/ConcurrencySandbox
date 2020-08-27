@@ -6,6 +6,7 @@
 #include <atomic>
 #include <mutex>
 #include <memory>
+#include <deque>
 #include <type_traits>
 
 class jthread
@@ -93,27 +94,104 @@ public:
   }
 };
 
+class LocalWorkQueue
+{
+private:
+  std::deque<Task> mTasks;
+  mutable std::mutex mLock;
+public:
+  LocalWorkQueue() = default;
+  LocalWorkQueue(const LocalWorkQueue&) = delete;
+  LocalWorkQueue& operator=(const LocalWorkQueue&) = delete;
+  ~LocalWorkQueue() = default;
+  void push(Task&& task)
+  {
+    std::lock_guard lk(mLock);
+    mTasks.push_front(std::move(task));
+  }
+  bool pop(Task& task)
+  {
+    std::lock_guard lk(mLock);
+    if(mTasks.empty())
+    {
+      return false;
+    }
+    task = std::move(mTasks.front());
+    mTasks.pop_front();
+    return true;
+  }
+  bool steal(Task& task)
+  {
+    std::lock_guard lk(mLock);
+    if(mTasks.empty())
+    {
+      return false;
+    }
+    task = std::move(mTasks.back());
+    mTasks.pop_back();
+    return true;
+  }
+};
+
 class ThreadPool
 {
 private:
   std::atomic<bool> mDone;
-  std::vector<jthread> mWorkerThreads;
   GlobalWorkQueue mGlobalWorkQueue;
+  std::vector<std::unique_ptr<LocalWorkQueue>> mLocalTasks;
+  std::vector<jthread> mWorkerThreads; // this member variable have to be after LocalQueues because the threads have to be destructed before LocalQueues are destructed.
+  static thread_local int sIndex;
+  static thread_local LocalWorkQueue* sLocalWorkQueue;
 private:
-  void work()
+  void work(int i)
   {
+    sIndex = i;
+    sLocalWorkQueue = mLocalTasks[i].get();
     while(!mDone)
     {
       runPendingTask();
     }
   }
+  bool getFromLocalQueue(Task& task)
+  {
+    return sLocalWorkQueue ? sLocalWorkQueue->pop(task): false;
+  }
+  bool getFromGlobalQueue(Task& task)
+  {
+    return mGlobalWorkQueue.pop(task);
+  }
+  bool getFromOtherLocalQueue(Task& task)
+  {
+    for(std::size_t i = 0; i < mLocalTasks.size(); ++i)
+    {
+      auto& queue = *mLocalTasks[(sIndex + i + 1) % mLocalTasks.size()];
+      if(queue.steal(task))
+      {
+        return true;
+      }
+    }
+    return false;
+  }
 public:
   ThreadPool(std::size_t numThread = std::thread::hardware_concurrency()):
     mDone(false)
   {
-    for(std::size_t i = 0; i < numThread; ++i)
+    try
     {
-      mWorkerThreads.emplace_back(&ThreadPool::work, this);
+      // construct LocalQueues before starting worker threads to avoid data race in mLocalTasks
+      for(std::size_t i = 0; i < numThread; ++i)
+      {
+        mLocalTasks.push_back(std::make_unique<LocalWorkQueue>());
+      }
+      for(std::size_t i = 0; i < numThread; ++i)
+      {
+        mWorkerThreads.emplace_back(&ThreadPool::work, this, i);
+      }
+    }
+    catch(...)
+    {
+      mDone.store(true);
+      throw;
     }
   }
   ~ThreadPool()
@@ -128,13 +206,20 @@ public:
     using result_type = std::invoke_result_t<Fn>;
     std::packaged_task<result_type()> task(fn);
     auto res = task.get_future();
-    mGlobalWorkQueue.push(std::move(task));
+    if(sLocalWorkQueue)
+    {
+      sLocalWorkQueue->push(std::move(task));
+    }
+    else
+    {
+      mGlobalWorkQueue.push(std::move(task));
+    }
     return res;
   }
   void runPendingTask()
   {
     Task task;
-    if(mGlobalWorkQueue.pop(task))
+    if(getFromLocalQueue(task) || getFromGlobalQueue(task) || getFromOtherLocalQueue(task))
     {
       task();
     }

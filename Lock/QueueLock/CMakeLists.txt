@@ -27,6 +27,7 @@ LINK_DIRECTORIES(${Boost_LIBRARY_DIRS})
 ADD_EXECUTABLE(test_queuelock
   TestQueueLock.cpp
   ArrayQueueLock.cpp
+  CLHQueueLock.cpp
 )
 
 TARGET_LINK_LIBRARIES(test_queuelock

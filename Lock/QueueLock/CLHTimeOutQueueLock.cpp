@@ -17,9 +17,9 @@ CLHTimeOutQueueLock::~CLHTimeOutQueueLock()
 void CLHTimeOutQueueLock::unlock()
 {
   Node* node = sMyNode;
-  if(!mTail.compare_exchange_strong(node, nullptr))
+  if(!mTail.compare_exchange_strong(node, nullptr, std::memory_order_acq_rel, std::memory_order_relaxed))
   {
-    sMyNode->mPred.store(&sAvaiable);
+    sMyNode->mPred.store(&sAvaiable, std::memory_order_release);
   }
   else
   {

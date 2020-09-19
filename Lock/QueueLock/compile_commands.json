@@ -1,0 +1,27 @@
+[
+{
+  "directory": "/mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/build",
+  "command": "/usr/bin/c++   -isystem /mnt/disk1/koudai/install/boost/boost_1_69/include   -Wall -Werror -g -fsanitize=address -fsanitize=undefined -g   -std=gnu++1z -o CMakeFiles/test_queuelock.dir/TestQueueLock.cpp.o -c /mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/TestQueueLock.cpp",
+  "file": "/mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/TestQueueLock.cpp"
+},
+{
+  "directory": "/mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/build",
+  "command": "/usr/bin/c++   -isystem /mnt/disk1/koudai/install/boost/boost_1_69/include   -Wall -Werror -g -fsanitize=address -fsanitize=undefined -g   -std=gnu++1z -o CMakeFiles/test_queuelock.dir/ArrayQueueLock.cpp.o -c /mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/ArrayQueueLock.cpp",
+  "file": "/mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/ArrayQueueLock.cpp"
+},
+{
+  "directory": "/mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/build",
+  "command": "/usr/bin/c++   -isystem /mnt/disk1/koudai/install/boost/boost_1_69/include   -Wall -Werror -g -fsanitize=address -fsanitize=undefined -g   -std=gnu++1z -o CMakeFiles/test_queuelock.dir/CLHQueueLock.cpp.o -c /mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/CLHQueueLock.cpp",
+  "file": "/mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/CLHQueueLock.cpp"
+},
+{
+  "directory": "/mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/build",
+  "command": "/usr/bin/c++   -isystem /mnt/disk1/koudai/install/boost/boost_1_69/include   -Wall -Werror -g -fsanitize=address -fsanitize=undefined -g   -std=gnu++1z -o CMakeFiles/test_queuelock.dir/MCSQueueLock.cpp.o -c /mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/MCSQueueLock.cpp",
+  "file": "/mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/MCSQueueLock.cpp"
+},
+{
+  "directory": "/mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/build",
+  "command": "/usr/bin/c++   -isystem /mnt/disk1/koudai/install/boost/boost_1_69/include   -Wall -Werror -g -fsanitize=address -fsanitize=undefined -g   -std=gnu++1z -o CMakeFiles/test_queuelock.dir/CLHTimeOutQueueLock.cpp.o -c /mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/CLHTimeOutQueueLock.cpp",
+  "file": "/mnt/disk1/koudai/git/ConcurrencySandbox/Lock/QueueLock/CLHTimeOutQueueLock.cpp"
+}
+]

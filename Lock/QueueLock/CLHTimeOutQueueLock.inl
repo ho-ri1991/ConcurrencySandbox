@@ -2,20 +2,22 @@ template <typename Rep, typename Period>
 bool CLHTimeOutQueueLock::tryLock(const std::chrono::duration<Rep, Period>& relTime)
 {
   sMyNode = new Node();
-  auto pred = mTail.exchange(sMyNode);
-  if(pred == nullptr || pred->mPred.load() == &sAvaiable)
+  sMyNode->mPred.store(nullptr, std::memory_order_relaxed);
+  auto pred = mTail.exchange(sMyNode, std::memory_order_acq_rel);
+  if(pred == nullptr)
   {
-    if(pred)
-    {
-      delete pred;
-    }
+    return true;
+  }
+  else if(pred->mPred.load(std::memory_order_acquire) == &sAvaiable)
+  {
+    delete pred;
     return true;
   }
   auto startTime = std::chrono::steady_clock::now();
   auto deadline = startTime + relTime;
   do 
   {
-    auto predPred = pred->mPred.load();
+    auto predPred = pred->mPred.load(std::memory_order_acquire);
     if(predPred == &sAvaiable)
     {
       delete pred;
@@ -29,9 +31,9 @@ bool CLHTimeOutQueueLock::tryLock(const std::chrono::duration<Rep, Period>& relT
   }
   while(std::chrono::steady_clock::now() < deadline);
   Node* node = sMyNode;
-  if(!mTail.compare_exchange_strong(node, pred))
+  if(!mTail.compare_exchange_strong(node, pred, std::memory_order_acq_rel, std::memory_order_relaxed))
   {
-    sMyNode->mPred.store(pred);
+    sMyNode->mPred.store(pred, std::memory_order_release);
   }
   else
   {

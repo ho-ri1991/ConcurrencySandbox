@@ -9,7 +9,6 @@ private:
   struct Node
   {
     std::atomic<Node*> mPred;
-    Node(): mPred(nullptr) {}
   };
   static Node sAvaiable;
   static thread_local Node* sMyNode;

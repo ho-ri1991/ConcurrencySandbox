@@ -3,17 +3,13 @@
 #include <atomic>
 #include <new>
 
-namespace my
-{
-inline constexpr std::size_t hardware_destructive_interference_size = 64;
-}
-
 class ArrayQueueLock
 {
 private:
+  static constexpr std::size_t hardware_destructive_interference_size = 64;
   struct Node
   {
-    alignas(my::hardware_destructive_interference_size) std::atomic<bool> mFlag;
+    alignas(hardware_destructive_interference_size) std::atomic<bool> mFlag;
     Node(): mFlag(false) {}
   };
   static constexpr unsigned int sCapacity = 64;

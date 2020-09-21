@@ -29,7 +29,7 @@ private:
   }
 public:
   AtomicStampedPointer() = default;
-  AtomicStampedPointer(T* data): mData(data) {}
+  AtomicStampedPointer(T* pointer, StampType stamp): mData(zip(pointer, stamp)) {}
   AtomicStampedPointer(const AtomicStampedPointer&) = delete;
   AtomicStampedPointer(AtomicStampedPointer&&) = delete;
   AtomicStampedPointer& operator=(const AtomicStampedPointer&) = delete;

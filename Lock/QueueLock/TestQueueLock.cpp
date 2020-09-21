@@ -14,6 +14,7 @@
 #include "MCSQueueLock.hpp"
 #include "CLHTimeOutQueueLock.hpp"
 #include "AtomicStampedPointer.hpp"
+#include "CompositeQueueLock.hpp"
 
 BOOST_AUTO_TEST_CASE(TestArrayQueueLock)
 {
@@ -258,5 +259,46 @@ BOOST_AUTO_TEST_CASE(TestAtomicStampedPointer)
   auto [p, s] = stampedPointer.load(std::memory_order_relaxed);
   BOOST_CHECK_EQUAL(set.count(p), 1);
   BOOST_CHECK_EQUAL(s, numThread * numIncr);
+}
+
+BOOST_AUTO_TEST_CASE(TestCompositeQueueLock)
+{
+  using namespace std::literals::chrono_literals;
+  CompositeQueueLock lock;
+  static constexpr std::size_t numThread = 16;
+  static constexpr std::size_t numIncr = 100;
+  std::size_t count = 0;
+  {
+    std::promise<void> start;
+    auto fut = start.get_future().share();
+    std::vector<std::future<void>> ready;
+    std::vector<std::future<void>> done;
+    for(std::size_t i = 0; i < numThread; ++i)
+    {
+      std::promise<void> promise;
+      ready.push_back(promise.get_future());
+      done.push_back(std::async(std::launch::async, [p = std::move(promise), start = fut, &lock, &count]()mutable{
+        p.set_value();
+        start.wait();
+        for(std::size_t i = 0; i < numIncr; ++i)
+        {
+          while(!lock.tryLock(1ms));
+          std::this_thread::sleep_for(50us);
+          count++;
+          lock.unlock();
+        }
+      }));
+    }
+    for(auto& fut: ready)
+    {
+      fut.wait();
+    }
+    start.set_value();
+    for(auto& fut: done)
+    {
+      fut.wait();
+    }
+  }
+  BOOST_CHECK_EQUAL(count, numThread * numIncr);
 }
 

@@ -24,32 +24,32 @@ private:
     Node(ThreadLocalVariableInitialize): mState((ClusterTraits::getClusterID() | sSuccessorMustWaitMask) & ~sTailWhenSplicedMask) {}
     void clear()
     {
-      auto oldState = mState.load();
+      auto oldState = mState.load(std::memory_order_relaxed);
       std::uint32_t newState = ClusterTraits::getClusterID();
       newState |= sSuccessorMustWaitMask;
       newState &= ~sTailWhenSplicedMask;
-      while(!mState.compare_exchange_weak(oldState, newState));
+      while(!mState.compare_exchange_weak(oldState, newState, std::memory_order_relaxed, std::memory_order_relaxed));
     }
     bool getSuccessorMustWait() const
     {
-      return mState.load() & sSuccessorMustWaitMask;
+      return mState.load(std::memory_order_acquire) & sSuccessorMustWaitMask;
     }
     void clearSuccessorMustWait()
     {
-      auto oldState = mState.load();
+      auto oldState = mState.load(std::memory_order_relaxed);
       std::uint32_t newState;
       do
       {
         newState = oldState & ~sSuccessorMustWaitMask;
       }
-      while(!mState.compare_exchange_strong(oldState, newState));
+      while(!mState.compare_exchange_strong(oldState, newState, std::memory_order_release, std::memory_order_relaxed));
     }
     bool waitForGrantOrClusterMaster() const
     {
       auto thisClusterID = ClusterTraits::getClusterID();
       while(true)
       {
-        auto state = mState.load();
+        auto state = mState.load(std::memory_order_acquire);
         auto clusterID = state & sClusterMask;
         bool successorMustWait = state & sSuccessorMustWaitMask;
         bool tailWhenSpliced = state & sTailWhenSplicedMask;
@@ -65,13 +65,13 @@ private:
     }
     void setTailWhenSpliced()
     {
-      auto oldState = mState.load();
+      auto oldState = mState.load(std::memory_order_relaxed);
       std::uint32_t newState;
       do
       {
         newState = oldState | sTailWhenSplicedMask;
       }
-      while(!mState.compare_exchange_weak(oldState, newState));
+      while(!mState.compare_exchange_weak(oldState, newState, std::memory_order_release, std::memory_order_relaxed));
     }
   };
   struct alignas(hardware_destructive_interference_size) AlignedNodePointer
@@ -98,7 +98,7 @@ private:
     GarbageCollector(): mTail(nullptr) {}
     ~GarbageCollector()
     {
-      auto tail = mTail.exchange(nullptr);
+      auto tail = mTail.exchange(nullptr, std::memory_order_acquire);
       while(tail)
       {
         auto next = tail->mNext;
@@ -109,8 +109,8 @@ private:
     void append(Node* node)
     {
       auto tail = new ListNode(node);
-      tail->mNext = mTail.load();
-      while(!mTail.compare_exchange_weak(tail->mNext, tail));
+      tail->mNext = mTail.load(std::memory_order_relaxed);
+      while(!mTail.compare_exchange_weak(tail->mNext, tail, std::memory_order_release, std::memory_order_relaxed));
     }
   };
   class ThreadLocalNodeHolder
@@ -142,17 +142,17 @@ public:
   HierarchicalCLHQueueLock()
   {
     auto node = new Node();
-    mGlobalTail.mPointer.store(node);
+    mGlobalTail.mPointer.store(node, std::memory_order_relaxed);
     getGarbageCollector().append(node);
     for(auto& p: mLocalTails)
     {
-      p.mPointer.store(nullptr);
+      p.mPointer.store(nullptr, std::memory_order_relaxed);
     }
   }
   void lock()
   {
     auto& localTail = mLocalTails[ClusterTraits::getClusterID()].mPointer;
-    auto pred1 = localTail.exchange(sMyNode.get());
+    auto pred1 = localTail.exchange(sMyNode.get(), std::memory_order_acq_rel);
     if(pred1)
     {
       auto isOwnLock = pred1->waitForGrantOrClusterMaster();
@@ -164,12 +164,12 @@ public:
     }
     // the thread is a cluster master
     Node* tail;
-    auto pred = mGlobalTail.mPointer.load();
+    auto pred = mGlobalTail.mPointer.load(std::memory_order_relaxed);
     do
     {
-      tail = localTail.load();
+      tail = localTail.load(std::memory_order_acquire);
     }
-    while(!mGlobalTail.mPointer.compare_exchange_strong(pred, tail));
+    while(!mGlobalTail.mPointer.compare_exchange_strong(pred, tail, std::memory_order_acq_rel, std::memory_order_relaxed));
     tail->setTailWhenSpliced();
     while(pred->getSuccessorMustWait());
     sMyPred = pred;

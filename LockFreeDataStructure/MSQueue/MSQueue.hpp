@@ -112,17 +112,36 @@ std::unique_ptr<T> MSQueue<T>::tryPop()
   {
     Node* head = nullptr;
     Node* tmp = nullptr;
-    do
+    while(true)
     {
-      head = mHead.load();
+      head = mHead.load(std::memory_order_seq_cst);
       hp.store(head);
-      if(head == mTail.load())
+      auto tail = mTail.load(std::memory_order_seq_cst);
+      if(head == tail)
       {
-        return nullptr;
+        hp.store(tail);
+        tmp = mTail.load(std::memory_order_seq_cst);
+        if(tail != tmp)
+        {
+          hp.release();
+          continue;
+        }
+        if(!tail->mNext)
+        {
+          hp.release();
+          return nullptr;
+        }
+        auto next = tail->mNext.load();
+        mTail.compare_exchange_strong(tail, next);
+        hp.release();
+        continue;
       }
-      tmp = mHead.load();
+      tmp = mHead.load(std::memory_order_seq_cst);
+      if(head == tmp)
+      {
+        break;
+      }
     }
-    while(head != tmp);
     auto next = head->mNext.load();
     if(mHead.compare_exchange_strong(head, next))
     {

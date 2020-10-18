@@ -64,9 +64,9 @@ void MSQueue<T>::push(const T& data)
     Node* tmp = nullptr;
     do
     {
-      tail = mTail.load();
+      tail = mTail.load(std::memory_order_seq_cst);
       hp.store(tail);
-      tmp = mTail.load();
+      tmp = mTail.load(std::memory_order_seq_cst);
     }
     while(tail != tmp);
     T* expected = nullptr;
@@ -108,6 +108,7 @@ template <typename T>
 std::unique_ptr<T> MSQueue<T>::tryPop()
 {
   HazardPointerHolder hp(HazardPointerDomain<>::getHazardPointerForCurrentThread());
+  std::unique_ptr<Node> newTail;
   while(true)
   {
     Node* head = nullptr;
@@ -126,12 +127,29 @@ std::unique_ptr<T> MSQueue<T>::tryPop()
           hp.release();
           continue;
         }
-        if(!tail->mNext)
+        if(!tail->mData.load())
         {
           hp.release();
           return nullptr;
         }
         auto next = tail->mNext.load();
+        if(!next)
+        {
+          if(!newTail)
+          {
+            newTail = std::make_unique<Node>();
+          }
+          Node* expected = nullptr;
+          if(tail->mNext.compare_exchange_strong(expected, newTail.get()))
+          {
+            next = newTail.get();
+            newTail.release();
+          }
+          else
+          {
+            next = tail->mNext.load();
+          }
+        }
         mTail.compare_exchange_strong(tail, next);
         hp.release();
         continue;

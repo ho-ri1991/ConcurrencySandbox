@@ -18,7 +18,7 @@ endif()
 
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror")
 SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address -fsanitize=undefined")
-# TestRefinableThreadSafeHashmap fails because it creates a mutex per bucket
+# TestRefinableThreadSafeHashmap fails because it creates a mutex per bucket and hold all of them to rehash
 # run test with TSAN_OPTIONS=detect_deadlocks=0
 #SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=thread")
 

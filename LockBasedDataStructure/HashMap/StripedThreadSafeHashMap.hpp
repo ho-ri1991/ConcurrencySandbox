@@ -7,23 +7,7 @@
 #include <unordered_map>
 #include <optional>
 #include <cassert>
-
-template <typename Fn>
-class Finally
-{
-private:
-  Fn fn;
-public:
-  Finally(Fn fn): fn(fn) {}
-  Finally(const Finally&) = delete;
-  Finally& operator=(const Finally&) = delete;
-  ~Finally() { fn(); }
-};
-template <typename Fn>
-Finally<Fn> finally(Fn fn)
-{
-  return Finally<Fn>(fn);
-}
+#include "Finally.hpp"
 
 template <typename Key, typename Value, typename Hash = std::hash<Key>>
 class StripedThreadSafeHashmap

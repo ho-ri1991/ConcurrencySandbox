@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 
 namespace Detail
 {
@@ -160,8 +161,7 @@ private:
     {
       auto node = std::make_unique<Detail::HazardPointerListNode>();
       mPointer = &node->mPointer;
-      sHazardPointerList.append(node.get());
-      node.release();
+      sHazardPointerList.append(node.release());
     }
     ~HazardPointerOwner()
     {
@@ -242,20 +242,58 @@ thread_local typename HazardPointerDomain<N>::HazardPointerOwner HazardPointerDo
 class HazardPointerHolder
 {
 private:
-  std::atomic<void*>& mHazardPointer;
+  std::atomic<void*>* mHazardPointer;
 public:
-  explicit HazardPointerHolder(std::atomic<void*>& hazardPointer) noexcept: mHazardPointer(hazardPointer) {}
+  explicit HazardPointerHolder(std::atomic<void*>& hazardPointer) noexcept: mHazardPointer(&hazardPointer) {}
   ~HazardPointerHolder()
   {
-    release();
+    if(mHazardPointer)
+    {
+      release();
+    }
+  }
+  HazardPointerHolder(const HazardPointerHolder&) = delete;
+  HazardPointerHolder(HazardPointerHolder&& other) noexcept: mHazardPointer(other.mHazardPointer)
+  {
+    other.mHazardPointer = nullptr;
+  }
+  HazardPointerHolder& operator=(const HazardPointerHolder&) = delete;
+  HazardPointerHolder& operator=(HazardPointerHolder&& other) noexcept
+  {
+    HazardPointerHolder tmp(std::move(other));
+    swap(tmp);
+    return *this;
   }
   void store(void* pointer) noexcept
   {
-    mHazardPointer.store(pointer, std::memory_order_seq_cst);
+    mHazardPointer->store(pointer, std::memory_order_seq_cst);
   }
   void release() noexcept
   {
-    mHazardPointer.store(nullptr, std::memory_order_seq_cst);
+    mHazardPointer->store(nullptr, std::memory_order_seq_cst);
+  }
+  void swap(HazardPointerHolder& other)
+  {
+    using std::swap;
+    swap(this->mHazardPointer, other.mHazardPointer);
   }
 };
 
+inline void swap(HazardPointerHolder& x, HazardPointerHolder& y)
+{
+  x.swap(y);
+}
+
+template <typename T>
+T* claimPointer(std::atomic<T*>& pointer, HazardPointerHolder& holder)
+{
+  T* p, q;
+  do
+  {
+    p = pointer.load(std::memory_order_seq_cst);
+    holder.store(p);
+    q = pointer.load(std::memory_order_seq_cst);
+  }
+  while (p != q);
+  return p;
+}

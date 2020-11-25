@@ -9,14 +9,14 @@ template <typename T>
 class AtomicMarkablePointer
 {
 private:
-  static_assert(1 < alignof(T));
+//  static_assert(1 < alignof(T));
   using InternalRep = std::uintptr_t;
   static constexpr InternalRep sMask = ~static_cast<InternalRep>(1);
   std::atomic<InternalRep> mData;
   static InternalRep zip(T* pointer, bool mark)
   {
-    assert((pointer & 1) == 0);
     InternalRep res = reinterpret_cast<InternalRep>(pointer);
+    assert((res & 1) == 0);
     return res | (mark ? 1 : 0);
   }
   static std::pair<T*, bool> unzip(InternalRep data)
@@ -120,7 +120,7 @@ private:
   };
   static Node* claimMarkablePointer(AtomicMarkablePointer<Node>& markablePointer, HazardPointerHolder& holder, bool* mark = nullptr)
   {
-    Node* p, q;
+    Node *p, *q;
     do
     {
       auto r1 = markablePointer.load(std::memory_order_seq_cst);
@@ -132,7 +132,15 @@ private:
     while(p != q);
     if(mark)
     {
-      *mark = q.second;
+      if(q)
+      {
+        auto [pointer, m] = q->mNext.load();
+        *mark = m;
+      }
+      else
+      {
+        *mark = true;
+      }
     }
     return p;
   }
@@ -164,7 +172,7 @@ private:
     {
       delete reinterpret_cast<Node*>(data);
     }
-    static std::tuple<Node*, Node*, HazardPointerHolder, HazardPointerHolder> find(std::atomic<Node*>& head, HashValueType hashValue, const Key& key)
+    static std::tuple<Node*, Node*, HazardPointerHolder, HazardPointerHolder> find(std::atomic<Node*>& head, HashValueType hashValue, const Key* key)
     {
       using std::swap;
       auto& predHp = HPDomain::getHazardPointerForCurrentThread(0);
@@ -182,6 +190,11 @@ private:
           HazardPointerHolder succHpHolder(succHp);
           bool mark;
           auto* succ = claimMarkablePointer(cur->mNext, succHpHolder, &mark);
+          if(!succ)
+          {
+            // in case where the next node of head is the Last sentinel node
+            return {pred, cur, std::move(predHpHolder), std::move(curHpHolder)};
+          }
           while(mark)
           {
             bool expectedMark = false;
@@ -202,7 +215,7 @@ private:
           }
           if((hashValue < cur->mHashValue) ||
              (hashValue == cur->mHashValue && !cur->mValue) || // sentinel key
-             (hashValue == cur->mHashValue && cur->mValue && cur->mValue->first == key))
+             (key && hashValue == cur->mHashValue && cur->mValue && cur->mValue->first == *key))
           {
             return {pred, cur, std::move(predHpHolder), std::move(curHpHolder)};
           }
@@ -223,19 +236,19 @@ private:
       bool mark = false;
       auto pred = claimPointer(head, predHpHolder);
       auto cur = claimMarkablePointer(pred->mNext, curHpHolder, &mark);
-      while(cur->mHashValue < hashValue || (cur->mHashValue == hashValue && cur->mValue.first != key))
+      while(cur->mHashValue < hashValue || (cur->mHashValue == hashValue && cur->mValue->first != key))
       {
         auto succ = claimMarkablePointer(cur->mNext, succHpHolder, &mark);
         pred = cur;
         swap(predHpHolder, curHpHolder);
-        cur = pred;
+        cur = succ;
         swap(curHpHolder, succHpHolder);
       }
-      if(cur->mHashValue != hashValue || cur->mValue.first != key || mark)
+      if(cur->mHashValue != hashValue || cur->mValue->first != key || mark)
       {
         return std::nullopt;
       }
-      return cur->mValue.second;
+      return cur->mValue->second;
     }
     static bool add(std::atomic<Node*>& head, HashValueType hashValue, const Key& key, const Value& value)
     {
@@ -244,8 +257,8 @@ private:
       newNode->mValue = std::make_pair(key, value);
       while(true)
       {
-        auto [pred, cur, predHpHolder, curHpHolder] = find(head, hashValue, key);
-        if(cur->mHashValue == hashValue && cur->mValue.first == key)
+        auto [pred, cur, predHpHolder, curHpHolder] = find(head, hashValue, &key);
+        if(cur->mHashValue == hashValue && cur->mValue->first == key)
         {
           return false;
         }
@@ -262,8 +275,8 @@ private:
     {
       while(true)
       {
-        auto [pred, cur, predHpHolder, curHpHolder] = find(head, hashValue, key);
-        if(cur->mHashValue != hashValue || cur->mValue.first != key)
+        auto [pred, cur, predHpHolder, curHpHolder] = find(head, hashValue, &key);
+        if(cur->mHashValue != hashValue || cur->mValue->first != key)
         {
           return false;
         }
@@ -306,17 +319,111 @@ private:
 private:
   LockFreeList mList;
   // TODO: make this a tree structure so that we can extend base array
-  std::vector<std::atomic<Node*>> mBaseArray;
+  std::vector<std::atomic<Node*>> mBuckets;
+  std::atomic<unsigned int> mBucketSize;
+  std::atomic<unsigned int> mSize;
+  Hash mHash; // TODO: EBO
+private:
+  HashValueType getParentIndex(HashValueType index)
+  {
+    auto i = mBucketSize.load();
+    while(index < i)
+    {
+      i <<= 1;
+    }
+    return index - i;
+  }
+  void insertSentinel(HashValueType index)
+  {
+    auto parentIndex = getParentIndex(index);
+    auto& parent = mBuckets[parentIndex];
+    if(parent.load() == nullptr)
+    {
+      insertSentinel(parentIndex);
+    }
+    auto sentinelKey = makeSentinelKey(index);
+    auto newNode = std::make_unique<Node>();
+    newNode->mHashValue = sentinelKey;
+    Node* sentinelNode;
+    while(true)
+    {
+      auto [pred, cur, predHpHolder, curHpHolder] = LockFreeList::find(parent, sentinelKey, nullptr);
+      if(cur->mHashValue == sentinelKey)
+      {
+        sentinelNode = cur;
+        break;
+      }
+      newNode->mNext.store(cur, false);
+      bool expectedMark = false;
+      if(pred->mNext.compare_exchange_strong(cur, newNode.get(), expectedMark, false))
+      {
+        sentinelNode = newNode.release();
+        break;
+      }
+    }
+    if(mBuckets[index].load() == nullptr)
+    {
+      mBuckets[index].store(sentinelNode);
+    }
+  }
+  std::atomic<Node*>& getSentinelNode(const Key& key)
+  {
+    auto hashValue = mHash(key);
+    auto index = hashValue % mBucketSize.load();
+    auto& sentinel = mBuckets[index];
+    if(sentinel.load() == nullptr)
+    {
+      insertSentinel(index);
+      return mBuckets[index];
+    }
+    return sentinel;
+  }
+  static constexpr std::size_t sThreshold = 4;
 public:
   LockFreeHashMap(std::size_t baseArraySize = 1 << 13)
     : mList(0, ~static_cast<HashValueType>(0))
-    , mBaseArray(baseArraySize)
+    , mBuckets(baseArraySize)
+    , mBucketSize(2)
+    , mSize(0)
   {
-    for(auto& val: mBaseArray)
+    for(auto& val: mBuckets)
     {
       val.store(nullptr, std::memory_order_seq_cst);
     }
-    mBaseArray[0].store(mList.mHead.load(std::memory_order_seq_cst));
+    mBuckets[0].store(mList.mHead.load(std::memory_order_seq_cst));
+  }
+  bool insert(const std::pair<Key, Value>& elem)
+  {
+    auto& sentinel = getSentinelNode(elem.first);
+    auto splitOrderedKey = makeOrdinaryKey(mHash(elem.first));
+    if(!LockFreeList::add(sentinel, splitOrderedKey, elem.first, elem.second))
+    {
+      return false;
+    }
+    auto prevSize = mSize.fetch_add(1);
+    auto curBucketSize = mBucketSize.load();
+    if(prevSize / curBucketSize > sThreshold && curBucketSize < mBuckets.size())
+    {
+      mBucketSize.compare_exchange_strong(curBucketSize, 2 * curBucketSize);
+    }
+    return true;
+  }
+  bool remove(const Key& key)
+  {
+    auto& sentinel = getSentinelNode(key);
+    auto splitOrderedKey = makeOrdinaryKey(mHash(key));
+    if(!LockFreeList::remove(sentinel, splitOrderedKey, key))
+    {
+      return false;
+    }
+    mSize.fetch_add(-1);
+    return true;
+  }
+  std::optional<Value> find(const Key& key)
+  {
+    auto& sentinel = getSentinelNode(key);
+    auto splitOrderedKey = makeOrdinaryKey(mHash(key));
+    return LockFreeList::get(sentinel, splitOrderedKey, key);
   }
 };
 

@@ -287,7 +287,7 @@ inline void swap(HazardPointerHolder& x, HazardPointerHolder& y)
 template <typename T>
 T* claimPointer(std::atomic<T*>& pointer, HazardPointerHolder& holder)
 {
-  T* p, q;
+  T *p, *q;
   do
   {
     p = pointer.load(std::memory_order_seq_cst);

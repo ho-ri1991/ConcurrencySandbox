@@ -30,3 +30,18 @@ ADD_TEST(
   COMMAND $<TARGET_FILE:test_lockfreestack> --log_level=message
 )
 
+ADD_EXECUTABLE(test_lockfreehashmap
+  TestLockFreeHashMap.cpp
+)
+
+TARGET_LINK_LIBRARIES(test_lockfreehashmap
+  boost_unit_test_framework
+  pthread
+  HashMap
+)
+
+ADD_TEST(
+  NAME TestLockFreeHashMap
+  COMMAND $<TARGET_FILE:test_lockfreehashmap> --log_level=message
+)
+

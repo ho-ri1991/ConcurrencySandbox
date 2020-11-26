@@ -4,6 +4,7 @@
 #include <cassert>
 #include <memory>
 #include "HazardPointer.hpp"
+#include <iostream>
 
 template <typename T>
 class AtomicMarkablePointer
@@ -122,6 +123,7 @@ private:
   static Node* claimMarkablePointer(AtomicMarkablePointer<Node>& markablePointer, HazardPointerHolder& holder, bool* mark = nullptr)
   {
     Node *p, *q;
+    bool m;
     do
     {
       auto r1 = markablePointer.load(std::memory_order_seq_cst);
@@ -129,19 +131,12 @@ private:
       auto r2 = markablePointer.load(std::memory_order_seq_cst);
       p = r1.first;
       q = r2.first;
+      m = r2.second;
     }
     while(p != q);
     if(mark)
     {
-      if(q)
-      {
-        auto [pointer, m] = q->mNext.load();
-        *mark = m;
-      }
-      else
-      {
-        *mark = true;
-      }
+      *mark = m;
     }
     return p;
   }
@@ -185,20 +180,17 @@ private:
         HazardPointerHolder predHpHolder(predHp);
         HazardPointerHolder curHpHolder(curHp);
         auto* pred = claimPointer(head, predHpHolder);
+        assert((pred->mHashValue & 3) == 0);
         auto* cur = claimMarkablePointer(pred->mNext, curHpHolder);
         while(true)
         {
           HazardPointerHolder succHpHolder(succHp);
           bool mark;
           auto* succ = claimMarkablePointer(cur->mNext, succHpHolder, &mark);
-          if(!succ)
-          {
-            // in case where the next node of head is the Last sentinel node
-            return {pred, cur, std::move(predHpHolder), std::move(curHpHolder)};
-          }
           while(mark)
           {
             bool expectedMark = false;
+            assert(cur->mValue);
             retry = !pred->mNext.compare_exchange_strong(cur, succ, expectedMark, false);
             if(retry)
             {
@@ -281,9 +273,10 @@ private:
         {
           return false;
         }
+        assert(cur->mValue);
         auto [succ, mark] = cur->mNext.load();
         mark = false;
-        if(!cur->mNext.compare_exchange_strong(succ, succ, mark, false))
+        if(!cur->mNext.compare_exchange_strong(succ, succ, mark, true))
         {
           continue;
         }
@@ -355,6 +348,7 @@ private:
         sentinelNode = cur;
         break;
       }
+      assert(sentinelKey < cur->mHashValue);
       newNode->mNext.store(cur, false);
       bool expectedMark = false;
       if(pred->mNext.compare_exchange_strong(cur, newNode.get(), expectedMark, false))
@@ -395,6 +389,10 @@ public:
     auto head = mList.mHead.load();
     mBuckets[0].store(head);
   }
+  ~LockFreeHashMap()
+  {
+//    dumpList(mList.mHead);
+  }
   bool insert(const std::pair<Key, Value>& elem)
   {
     auto& sentinel = getSentinelNode(elem.first);
@@ -427,6 +425,23 @@ public:
     auto& sentinel = getSentinelNode(key);
     auto splitOrderedKey = makeOrdinaryKey(mHash(key));
     return LockFreeList::get(sentinel, splitOrderedKey, key);
+  }
+  std::size_t size() const noexcept { return mSize.load(std::memory_order_relaxed); }
+  bool empty() const noexcept { return mSize.load(std::memory_order_relaxed) == 0; }
+  static void dumpList(std::atomic<Node*>& head)
+  {
+    auto cur = head.load();
+    while(cur)
+    {
+      std::cout << cur->mHashValue << ", ";
+      if(cur->mValue)
+      {
+        std::cout << "[" << cur->mValue->first << ", " << cur->mValue->second << "]";
+      }
+      std::cout << std::endl;
+      auto [p, mark] = cur->mNext.load();
+      cur = p;
+    }
   }
 };
 

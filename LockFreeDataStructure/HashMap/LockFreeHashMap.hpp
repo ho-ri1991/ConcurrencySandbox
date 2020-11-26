@@ -108,6 +108,7 @@ class LockFreeHashMap
 {
 private:
   using HashValueType = decltype(std::declval<Hash>()(std::declval<const Key&>()));
+  static_assert(std::is_integral_v<HashValueType>);
   using HPDomain = HazardPointerDomain<3>;
   static constexpr std::size_t HashValueTypeBitWidth = sizeof(HashValueType) * 8;
   static constexpr HashValueType sHiMask = static_cast<HashValueType>(3) << (HashValueTypeBitWidth - 2);
@@ -327,10 +328,11 @@ private:
   HashValueType getParentIndex(HashValueType index)
   {
     auto i = mBucketSize.load();
-    while(index < i)
+    do
     {
-      i <<= 1;
+      i >>= 1;
     }
+    while(index < i);
     return index - i;
   }
   void insertSentinel(HashValueType index)
@@ -390,7 +392,8 @@ public:
     {
       val.store(nullptr, std::memory_order_seq_cst);
     }
-    mBuckets[0].store(mList.mHead.load(std::memory_order_seq_cst));
+    auto head = mList.mHead.load();
+    mBuckets[0].store(head);
   }
   bool insert(const std::pair<Key, Value>& elem)
   {

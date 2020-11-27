@@ -118,5 +118,53 @@ BOOST_AUTO_TEST_CASE(TestSingleThreadLockFreeHashMap)
 }
 BOOST_AUTO_TEST_CASE(TestLockFreeHashMap)
 {
+  {
+    LockFreeHashMap<int, int> map;
+    std::promise<void> start;
+    std::vector<std::future<void>> ready;
+    std::vector<std::future<void>> done;
+    static constexpr std::size_t numInsertThreads = 8;
+    static constexpr std::size_t numRemoveThreads = numInsertThreads;
+    static constexpr std::size_t numInsert = 5000;
+    auto startFut = start.get_future().share();
+    for(std::size_t i = 0; i < numInsertThreads; ++i)
+    {
+      std::promise<void> p;
+      ready.push_back(p.get_future());
+      done.push_back(std::async(std::launch::async, [id = i, p = std::move(p), &map, startFut]()mutable{
+        p.set_value();
+        startFut.wait();
+        for(std::size_t i = 0; i < numInsert; ++i)
+        {
+          int elem = id * numInsert + i;
+          map.insert({elem, -elem});
+        }
+      }));
+    }
+    for(std::size_t i = 0; i < numRemoveThreads; ++i)
+    {
+      std::promise<void> p;
+      ready.push_back(p.get_future());
+      done.push_back(std::async(std::launch::async, [id = i, p = std::move(p), &map, startFut]()mutable{
+        p.set_value();
+        startFut.wait();
+        for(std::size_t i = 0; i < numInsert; ++i)
+        {
+          int elem = id * numInsert + i;
+          while(!map.remove(elem));
+        }
+      }));
+    }
+    for(auto& fut: ready)
+    {
+      fut.wait();
+    }
+    start.set_value();
+    for(auto& fut: done)
+    {
+      fut.wait();
+    }
+    BOOST_CHECK(map.empty());
+  }
 }
 

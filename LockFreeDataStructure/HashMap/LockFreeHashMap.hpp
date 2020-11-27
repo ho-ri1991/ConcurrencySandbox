@@ -171,20 +171,17 @@ private:
     static std::tuple<Node*, Node*, HazardPointerHolder, HazardPointerHolder> find(std::atomic<Node*>& head, HashValueType hashValue, const Key* key)
     {
       using std::swap;
-      auto& predHp = HPDomain::getHazardPointerForCurrentThread(0);
-      auto& curHp = HPDomain::getHazardPointerForCurrentThread(1);
-      auto& succHp = HPDomain::getHazardPointerForCurrentThread(2);
+      HazardPointerHolder predHpHolder(HPDomain::getHazardPointerForCurrentThread(0));
+      HazardPointerHolder curHpHolder(HPDomain::getHazardPointerForCurrentThread(1));
+      HazardPointerHolder succHpHolder(HPDomain::getHazardPointerForCurrentThread(2));
       while(true)
       {
         bool retry = false;
-        HazardPointerHolder predHpHolder(predHp);
-        HazardPointerHolder curHpHolder(curHp);
         auto* pred = claimPointer(head, predHpHolder);
         assert((pred->mHashValue & 3) == 0);
         auto* cur = claimMarkablePointer(pred->mNext, curHpHolder);
         while(true)
         {
-          HazardPointerHolder succHpHolder(succHp);
           bool mark;
           auto* succ = claimMarkablePointer(cur->mNext, succHpHolder, &mark);
           while(mark)
@@ -280,7 +277,6 @@ private:
         {
           continue;
         }
-        mark = false;
         if(pred->mNext.compare_exchange_strong(cur, succ, mark, false))
         {
           curHpHolder.store(nullptr);

@@ -3,8 +3,10 @@
 #include <functional>
 #include <cassert>
 #include <memory>
+#include <optional>
+#include <variant>
+#include <cmath>
 #include "HazardPointer.hpp"
-#include <iostream>
 
 template <typename T>
 class AtomicMarkablePointer
@@ -101,6 +103,137 @@ public:
   bool compare_exchange_strong(T*& expected_pointer, T* desired_pointer, bool& expected_mark, bool desired_mark, std::memory_order order = std::memory_order_seq_cst) noexcept
   {
     return compare_exchange_strong(expected_pointer, desired_pointer, expected_mark, desired_mark, order, order);
+  }
+};
+
+struct DefaultInitializer
+{
+  template <typename T>
+  void operator()(T&&) {}
+};
+template <typename T, std::size_t BaseArraySize = 1 << 10, typename Initializer = DefaultInitializer>
+class LockFreeExtendibleBucket
+{
+private:
+  struct BucketNode
+  {
+    static constexpr std::size_t sBucketSize = 1 << 10;
+    template <typename U>
+    using BucketArray = std::array<U, sBucketSize>;
+    using LeafNodeElement = T;
+    using InnerNodeElement = std::atomic<BucketNode*>;
+    using Data = std::variant<BucketArray<LeafNodeElement>, BucketArray<InnerNodeElement>>;
+    static constexpr std::size_t LeafNodeIndex = 0;
+    static constexpr std::size_t InnerNodeIndex = 1;
+    unsigned int mHeight;
+    Data mBucket;
+    explicit BucketNode(unsigned int height)
+      : mHeight(height)
+      , mBucket(mHeight == 0 ? Data(std::in_place_index<LeafNodeIndex>) : Data(std::in_place_index<InnerNodeIndex>))
+    {
+      if(mHeight)
+      {
+        auto& data = std::get<InnerNodeIndex>(mBucket);
+        for(auto& elem: data)
+        {
+          elem.store(nullptr, std::memory_order_relaxed);
+        }
+      }
+      else
+      {
+        auto& data = std::get<LeafNodeIndex>(mBucket);
+        for(auto& elem: data)
+        {
+          Initializer()(elem);
+        }
+      }
+    }
+  };
+  std::atomic<BucketNode*> mRoot;
+private:
+  static std::size_t pow(std::size_t x, std::size_t y)
+  {
+    std::size_t ans = 1;
+    for(std::size_t i = 0; i < y; ++i)
+    {
+      ans *= x;
+    }
+    return ans;
+  }
+  void cleanupTree(BucketNode* node)
+  {
+    if(!node)
+    {
+      return;
+    }
+    if(node->mHeight)
+    {
+      auto& bucket = std::get<BucketNode::InnerNodeIndex>(node->mBucket);
+      for(auto& node: bucket)
+      {
+        cleanupTree(node.exchange(nullptr, std::memory_order_acquire));
+      }
+    }
+    delete node;
+  }
+  T& getImpl(std::size_t i, BucketNode* node)
+  {
+    auto height = node->mHeight;
+    if(height == 0)
+    {
+      return std::get<BucketNode::LeafNodeIndex>(node->mBucket)[i % BucketNode::sBucketSize];
+    }
+    auto size = pow(BucketNode::sBucketSize, height);
+    auto& data = std::get<BucketNode::InnerNodeIndex>(node->mBucket);
+    auto& child = data[i / size];
+    auto childNode = child.load(std::memory_order_acquire);
+    if(childNode == nullptr)
+    {
+      auto newChild = std::make_unique<BucketNode>(height - 1);
+      BucketNode* expected = nullptr;
+      auto success = child.compare_exchange_strong(expected, newChild.get(), std::memory_order_acquire, std::memory_order_release);
+      if(success)
+      {
+        childNode = newChild.release();
+      }
+      else
+      {
+        childNode = expected;
+      }
+    }
+    return getImpl(i % size, childNode);
+  }
+public:
+  LockFreeExtendibleBucket()
+    : mRoot(new BucketNode(0))
+  {
+  }
+  ~LockFreeExtendibleBucket()
+  {
+    cleanupTree(mRoot.exchange(nullptr, std::memory_order_acquire));
+  }
+  bool extend()
+  {
+    auto prevRoot = mRoot.load();
+    auto newHeight = prevRoot->mHeight + 1;
+    auto newRoot = std::make_unique<BucketNode>(newHeight);
+    std::get<BucketNode::InnerNodeIndex>(newRoot->mBucket)[0].store(prevRoot, std::memory_order_relaxed);
+    bool success = mRoot.compare_exchange_strong(
+      prevRoot, newRoot.get(), std::memory_order_release, std::memory_order_relaxed);
+    if(success)
+    {
+      newRoot.release();
+    }
+    return success;
+  }
+  T& operator[](std::size_t i)
+  {
+    return getImpl(i, mRoot.load(std::memory_order_acquire));
+  }
+  std::size_t size() const noexcept
+  {
+    auto root = mRoot.load(std::memory_order_acquire);
+    return pow(BaseArraySize, root->mHeight + 1);
   }
 };
 
@@ -310,7 +443,6 @@ private:
   {
     return reverse(value & sMask) | 1;
   }
-
 private:
   LockFreeList mList;
   // TODO: make this a tree structure so that we can extend base array

@@ -43,6 +43,40 @@ BOOST_AUTO_TEST_CASE(TestAtomicMarkablePointer)
     }
   }
 }
+BOOST_AUTO_TEST_CASE(TestSingleThreadLockFreeExtendibleBucket)
+{
+  static constexpr int sInitialValue = 42;
+  struct Initializer
+  {
+    void operator()(int& val) { val = sInitialValue; }
+  };
+  static constexpr std::size_t baseArraySize = 1 << 2;
+  LockFreeExtendibleBucket<int, baseArraySize, Initializer> bucket;
+  BOOST_CHECK_EQUAL(bucket.size(), baseArraySize);
+  for(std::size_t i = 0; i < bucket.size(); ++i)
+  {
+    BOOST_CHECK_EQUAL(bucket[i], sInitialValue);
+    bucket[i] = i;
+  }
+  bucket.extend();
+  BOOST_CHECK_EQUAL(bucket.size(), baseArraySize * baseArraySize);
+  for(std::size_t i = baseArraySize; i < bucket.size(); ++i)
+  {
+    BOOST_CHECK_EQUAL(bucket[i], sInitialValue);
+    bucket[i] = i;
+  }
+  bucket.extend();
+  BOOST_CHECK_EQUAL(bucket.size(), baseArraySize * baseArraySize * baseArraySize);
+  for(std::size_t i = baseArraySize * baseArraySize; i < bucket.size(); ++i)
+  {
+    BOOST_CHECK_EQUAL(bucket[i], sInitialValue);
+    bucket[i] = i;
+  }
+  for(std::size_t i = 0; i < bucket.size(); ++i)
+  {
+    BOOST_CHECK_EQUAL(i, i);
+  }
+}
 BOOST_AUTO_TEST_CASE(TestSingleThreadLockFreeHashMap)
 {
   {

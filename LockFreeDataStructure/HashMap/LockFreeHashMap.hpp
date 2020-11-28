@@ -188,7 +188,8 @@ private:
           {
             bool expectedMark = false;
             assert(cur->mValue);
-            retry = !pred->mNext.compare_exchange_strong(cur, succ, expectedMark, false);
+            retry = !pred->mNext.compare_exchange_strong(
+              cur, succ, expectedMark, false, std::memory_order_release, std::memory_order_relaxed);
             if(retry)
             {
               break;
@@ -252,9 +253,11 @@ private:
         {
           return false;
         }
-        newNode->mNext.store(cur, false);
+        newNode->mNext.store(cur, false, std::memory_order_relaxed);
         bool expectedMark = false;
-        if(pred->mNext.compare_exchange_strong(cur, newNode.get(), expectedMark, false))
+        if(pred->mNext.compare_exchange_strong(
+            cur, newNode.get(), expectedMark, false,
+            std::memory_order_release, std::memory_order_relaxed))
         {
           newNode.release();
           return true;
@@ -271,13 +274,15 @@ private:
           return false;
         }
         assert(cur->mValue);
-        auto [succ, mark] = cur->mNext.load();
+        auto [succ, mark] = cur->mNext.load(std::memory_order_acquire);
         mark = false;
-        if(!cur->mNext.compare_exchange_strong(succ, succ, mark, true))
+        if(!cur->mNext.compare_exchange_strong(
+            succ, succ, mark, true, std::memory_order_relaxed, std::memory_order_relaxed))
         {
           continue;
         }
-        if(pred->mNext.compare_exchange_strong(cur, succ, mark, false))
+        if(pred->mNext.compare_exchange_strong(
+           cur, succ, mark, false, std::memory_order_release, std::memory_order_relaxed))
         {
           curHpHolder.store(nullptr);
           HPDomain::retire(cur, &deleter);
@@ -316,7 +321,7 @@ private:
 private:
   HashValueType getParentIndex(HashValueType index)
   {
-    auto i = mBucketSize.load();
+    auto i = mBucketSize.load(std::memory_order_relaxed);
     do
     {
       i >>= 1;
@@ -328,7 +333,7 @@ private:
   {
     auto parentIndex = getParentIndex(index);
     auto& parent = mBuckets[parentIndex];
-    if(parent.load() == nullptr)
+    if(parent.load(std::memory_order_acquire) == nullptr)
     {
       insertSentinel(parentIndex);
     }
@@ -345,25 +350,26 @@ private:
         break;
       }
       assert(sentinelKey < cur->mHashValue);
-      newNode->mNext.store(cur, false);
+      newNode->mNext.store(cur, false, std::memory_order_relaxed);
       bool expectedMark = false;
-      if(pred->mNext.compare_exchange_strong(cur, newNode.get(), expectedMark, false))
+      if(pred->mNext.compare_exchange_strong(
+          cur, newNode.get(), expectedMark, false, std::memory_order_release, std::memory_order_relaxed))
       {
         sentinelNode = newNode.release();
         break;
       }
     }
-    if(mBuckets[index].load() == nullptr)
+    if(mBuckets[index].load(std::memory_order_relaxed) == nullptr)
     {
-      mBuckets[index].store(sentinelNode);
+      mBuckets[index].store(sentinelNode, std::memory_order_release);
     }
   }
   std::atomic<Node*>& getSentinelNode(const Key& key)
   {
     auto hashValue = mHash(key);
-    auto index = hashValue % mBucketSize.load();
+    auto index = hashValue % mBucketSize.load(std::memory_order_relaxed);
     auto& sentinel = mBuckets[index];
-    if(sentinel.load() == nullptr)
+    if(sentinel.load(std::memory_order_acquire) == nullptr)
     {
       insertSentinel(index);
       return mBuckets[index];
@@ -380,14 +386,10 @@ public:
   {
     for(auto& val: mBuckets)
     {
-      val.store(nullptr, std::memory_order_seq_cst);
+      val.store(nullptr, std::memory_order_relaxed);
     }
-    auto head = mList.mHead.load();
-    mBuckets[0].store(head);
-  }
-  ~LockFreeHashMap()
-  {
-//    dumpList(mList.mHead);
+    auto head = mList.mHead.load(std::memory_order_relaxed);
+    mBuckets[0].store(head, std::memory_order_release);
   }
   bool insert(const std::pair<Key, Value>& elem)
   {
@@ -397,11 +399,12 @@ public:
     {
       return false;
     }
-    auto prevSize = mSize.fetch_add(1);
-    auto curBucketSize = mBucketSize.load();
+    auto prevSize = mSize.fetch_add(1, std::memory_order_relaxed);
+    auto curBucketSize = mBucketSize.load(std::memory_order_relaxed);
     if(prevSize / curBucketSize > sThreshold && curBucketSize < mBuckets.size())
     {
-      mBucketSize.compare_exchange_strong(curBucketSize, 2 * curBucketSize);
+      mBucketSize.compare_exchange_strong(
+        curBucketSize, 2 * curBucketSize, std::memory_order_relaxed, std::memory_order_relaxed);
     }
     return true;
   }
@@ -413,7 +416,7 @@ public:
     {
       return false;
     }
-    mSize.fetch_add(-1);
+    mSize.fetch_add(-1, std::memory_order_relaxed);
     return true;
   }
   std::optional<Value> find(const Key& key)
@@ -424,20 +427,5 @@ public:
   }
   std::size_t size() const noexcept { return mSize.load(std::memory_order_relaxed); }
   bool empty() const noexcept { return mSize.load(std::memory_order_relaxed) == 0; }
-  static void dumpList(std::atomic<Node*>& head)
-  {
-    auto cur = head.load();
-    while(cur)
-    {
-      std::cout << cur->mHashValue << ", ";
-      if(cur->mValue)
-      {
-        std::cout << "[" << cur->mValue->first << ", " << cur->mValue->second << "]";
-      }
-      std::cout << std::endl;
-      auto [p, mark] = cur->mNext.load();
-      cur = p;
-    }
-  }
 };
 

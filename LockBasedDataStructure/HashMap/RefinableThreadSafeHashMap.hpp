@@ -388,14 +388,10 @@ void RefinableThreadSafeHashmap<Key, Value, Hash>::rehash(std::unique_lock<std::
     oldLocks = mLocks.load();
     for(auto& l: *oldLocks)
     {
+      // wait for threads that hold the lock before mRehash is set
       l.lock();
+      l.unlock();
     }
-    auto fin = finally([oldLocks]{
-      for(auto& l: *oldLocks)
-      {
-        l.unlock();
-      }
-    });
     std::size_t newBucketSize = 2 * prevBucketSize;
     std::vector<Bucket> newBucket(newBucketSize);
     for(auto& bucket: mBuckets)

@@ -4,6 +4,7 @@ ADD_LIBRARY(HashMap INTERFACE)
 
 TARGET_LINK_LIBRARIES(HashMap
   INTERFACE
+  AtomicPointer
   HazardPointer
 )
 

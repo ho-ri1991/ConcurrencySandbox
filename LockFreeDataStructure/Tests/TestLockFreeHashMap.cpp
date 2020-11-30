@@ -59,12 +59,14 @@ BOOST_AUTO_TEST_CASE(TestSingleThreadLockFreeExtendibleBucket)
     bucket[i] = i;
   }
   bucket.extend();
+  bucket.extend();
   BOOST_CHECK_EQUAL(bucket.size(), baseArraySize * baseArraySize);
   for(std::size_t i = baseArraySize; i < bucket.size(); ++i)
   {
     BOOST_CHECK_EQUAL(bucket[i], sInitialValue);
     bucket[i] = i;
   }
+  bucket.extend();
   bucket.extend();
   BOOST_CHECK_EQUAL(bucket.size(), baseArraySize * baseArraySize * baseArraySize);
   for(std::size_t i = baseArraySize * baseArraySize; i < bucket.size(); ++i)
@@ -159,7 +161,7 @@ BOOST_AUTO_TEST_CASE(TestLockFreeHashMap)
     std::vector<std::future<void>> done;
     static constexpr std::size_t numInsertThreads = 8;
     static constexpr std::size_t numRemoveThreads = numInsertThreads;
-    static constexpr std::size_t numInsert = 5000;
+    static constexpr std::size_t numInsert = 10000;
     auto startFut = start.get_future().share();
     for(std::size_t i = 0; i < numInsertThreads; ++i)
     {

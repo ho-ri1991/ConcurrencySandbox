@@ -5,106 +5,10 @@
 #include <memory>
 #include <optional>
 #include <variant>
-#include <cmath>
+#include <cstdint>
+#include "AtomicMarkablePointer.hpp"
+#include "AtomicStampedPointer.hpp"
 #include "HazardPointer.hpp"
-
-template <typename T>
-class AtomicMarkablePointer
-{
-private:
-//  static_assert(1 < alignof(T));
-  using InternalRep = std::uintptr_t;
-  static constexpr InternalRep sMask = ~static_cast<InternalRep>(1);
-  std::atomic<InternalRep> mData;
-  static InternalRep zip(T* pointer, bool mark)
-  {
-    InternalRep res = reinterpret_cast<InternalRep>(pointer);
-    assert((res & 1) == 0);
-    return res | (mark ? 1 : 0);
-  }
-  static std::pair<T*, bool> unzip(InternalRep data)
-  {
-    T* pointer = reinterpret_cast<T*>(data & sMask);
-    bool mark = data & 1;
-    return {pointer, mark};
-  }
-public:
-  AtomicMarkablePointer() = default;
-  AtomicMarkablePointer(T* pointer, bool mark) noexcept: mData(zip(pointer, mark)) {}
-  AtomicMarkablePointer(const AtomicMarkablePointer&) = delete;
-  AtomicMarkablePointer& operator=(const AtomicMarkablePointer&) = delete;
-  ~AtomicMarkablePointer() = default;
-  bool is_lock_free() const volatile noexcept { return mData.is_lock_free(); }
-  bool is_lock_free() const noexcept { return mData.is_lock_free(); }
-  void store(T* pointer, bool mark, std::memory_order order = std::memory_order_seq_cst) volatile noexcept { mData.store(zip(pointer, mark), order); }
-  void store(T* pointer, bool mark, std::memory_order order = std::memory_order_seq_cst) noexcept { mData.store(zip(pointer, mark), order); }
-  std::pair<T*, bool> load(std::memory_order order = std::memory_order_seq_cst) const volatile noexcept { return unzip(mData.load(order)); }
-  std::pair<T*, bool> load(std::memory_order order = std::memory_order_seq_cst) const noexcept { return unzip(mData.load(order)); }
-  std::pair<T*, bool> exchange(T* pointer, bool mark, std::memory_order order = std::memory_order_seq_cst) volatile noexcept
-  {
-    return unzip(mData.exchange(zip(pointer, mark), order));
-  }
-  std::pair<T*, bool> exchange(T* pointer, bool mark, std::memory_order order = std::memory_order_seq_cst) noexcept
-  {
-    return unzip(mData.exchange(zip(pointer, mark), order));
-  }
-  bool compare_exchange_weak(T*& expected_pointer, T* desired_pointer, bool& expected_mark, bool desired_mark, std::memory_order success, std::memory_order failure) volatile noexcept
-  {
-    InternalRep expected = zip(expected_pointer, expected_mark);
-    InternalRep desired = zip(desired_pointer, desired_mark);
-    bool ans = mData.compare_exchange_weak(expected, desired, success, failure);
-    auto data = unzip(expected);
-    expected_pointer = data.first;
-    expected_mark = data.second;
-    return ans;
-  }
-  bool compare_exchange_weak(T*& expected_pointer, T* desired_pointer, bool& expected_mark, bool desired_mark, std::memory_order success, std::memory_order failure) noexcept
-  {
-    InternalRep expected = zip(expected_pointer, expected_mark);
-    InternalRep desired = zip(desired_pointer, desired_mark);
-    bool ans = mData.compare_exchange_weak(expected, desired, success, failure);
-    auto data = unzip(expected);
-    expected_pointer = data.first;
-    expected_mark = data.second;
-    return ans;
-  }
-  bool compare_exchange_weak(T*& expected_pointer, T* desired_pointer, bool& expected_mark, bool desired_mark, std::memory_order order = std::memory_order_seq_cst) volatile noexcept
-  {
-    return compare_exchange_weak(expected_pointer, desired_pointer, expected_mark, desired_mark, order, order);
-  }
-  bool compare_exchange_weak(T*& expected_pointer, T* desired_pointer, bool& expected_mark, bool desired_mark, std::memory_order order = std::memory_order_seq_cst) noexcept
-  {
-    return compare_exchange_weak(expected_pointer, desired_pointer, expected_mark, desired_mark, order, order);
-  }
-  bool compare_exchange_strong(T*& expected_pointer, T* desired_pointer, bool& expected_mark, bool desired_mark, std::memory_order success, std::memory_order failure) volatile noexcept
-  {
-    InternalRep expected = zip(expected_pointer, expected_mark);
-    InternalRep desired = zip(desired_pointer, desired_mark);
-    bool ans = mData.compare_exchange_strong(expected, desired, success, failure);
-    auto data = unzip(expected);
-    expected_pointer = data.first;
-    expected_mark = data.second;
-    return ans;
-  }
-  bool compare_exchange_strong(T*& expected_pointer, T* desired_pointer, bool& expected_mark, bool desired_mark, std::memory_order success, std::memory_order failure) noexcept
-  {
-    InternalRep expected = zip(expected_pointer, expected_mark);
-    InternalRep desired = zip(desired_pointer, desired_mark);
-    bool ans = mData.compare_exchange_strong(expected, desired, success, failure);
-    auto data = unzip(expected);
-    expected_pointer = data.first;
-    expected_mark = data.second;
-    return ans;
-  }
-  bool compare_exchange_strong(T*& expected_pointer, T* desired_pointer, bool& expected_mark, bool desired_mark, std::memory_order order = std::memory_order_seq_cst) volatile noexcept
-  {
-    return compare_exchange_strong(expected_pointer, desired_pointer, expected_mark, desired_mark, order, order);
-  }
-  bool compare_exchange_strong(T*& expected_pointer, T* desired_pointer, bool& expected_mark, bool desired_mark, std::memory_order order = std::memory_order_seq_cst) noexcept
-  {
-    return compare_exchange_strong(expected_pointer, desired_pointer, expected_mark, desired_mark, order, order);
-  }
-};
 
 struct DefaultInitializer
 {
@@ -114,6 +18,19 @@ struct DefaultInitializer
 template <typename T, std::size_t BaseArraySize = 1 << 10, typename Initializer = DefaultInitializer>
 class LockFreeExtendibleBucket
 {
+  static constexpr bool isPowersOf2(std::size_t x)
+  {
+    if(x < 2)
+    {
+      return x == 1;
+    }
+    return x % 2 ? false : isPowersOf2(x / 2);
+  }
+  static constexpr std::size_t exponent(std::size_t x)
+  {
+    return x == 1 ? 0 : exponent(x / 2) + 1;
+  }
+  static_assert(isPowersOf2(BaseArraySize));
 private:
   struct BucketNode
   {
@@ -149,7 +66,8 @@ private:
       }
     }
   };
-  std::atomic<BucketNode*> mRoot;
+  using ExponentType =typename AtomicStampedPointer<BucketNode>::StampType;
+  AtomicStampedPointer<BucketNode> mRoot;
 private:
   static std::size_t pow(std::size_t x, std::size_t y)
   {
@@ -191,7 +109,7 @@ private:
     {
       auto newChild = std::make_unique<BucketNode>(height - 1);
       BucketNode* expected = nullptr;
-      auto success = child.compare_exchange_strong(expected, newChild.get(), std::memory_order_acquire, std::memory_order_release);
+      auto success = child.compare_exchange_strong(expected, newChild.get(), std::memory_order_acq_rel, std::memory_order_release);
       if(success)
       {
         childNode = newChild.release();
@@ -203,41 +121,56 @@ private:
     }
     return getImpl(i % size, childNode);
   }
-public:
-  LockFreeExtendibleBucket()
-    : mRoot(new BucketNode(0))
+  bool extendTree(BucketNode* root, ExponentType exp)
   {
-  }
-  ~LockFreeExtendibleBucket()
-  {
-    cleanupTree(mRoot.exchange(nullptr, std::memory_order_acquire));
-  }
-  bool extend()
-  {
-    auto prevRoot = mRoot.load();
-    auto newHeight = prevRoot->mHeight + 1;
+    auto newHeight = root->mHeight + 1;
     auto newRoot = std::make_unique<BucketNode>(newHeight);
-    std::get<BucketNode::InnerNodeIndex>(newRoot->mBucket)[0].store(prevRoot, std::memory_order_relaxed);
+    std::get<BucketNode::InnerNodeIndex>(newRoot->mBucket)[0].store(root, std::memory_order_relaxed);
+    auto newExp = exp + 1;
     bool success = mRoot.compare_exchange_strong(
-      prevRoot, newRoot.get(), std::memory_order_release, std::memory_order_relaxed);
+      root, newRoot.get(), exp, newExp, std::memory_order_release, std::memory_order_relaxed);
     if(success)
     {
       newRoot.release();
     }
     return success;
   }
+public:
+  LockFreeExtendibleBucket(std::size_t initialSize = BaseArraySize)
+    : mRoot(new BucketNode(0), exponent(initialSize))
+  {
+    assert(isPowersOf2(initialSize));
+  }
+  ~LockFreeExtendibleBucket()
+  {
+    auto [root, exp] = mRoot.exchange(nullptr, 0);
+    cleanupTree(root);
+  }
+  bool extend()
+  {
+    auto [root, exp] = mRoot.load();
+    auto height = root->mHeight;
+    if(1ULL << exp <= pow(BaseArraySize, height + 1))
+    {
+      // release sequences allow us to use relaxed ordering here
+      return mRoot.compare_exchange_strong(
+        root, root, exp, exp + 1, std::memory_order_relaxed, std::memory_order_relaxed);
+    }
+    return extendTree(root, exp);
+  }
   T& operator[](std::size_t i)
   {
-    return getImpl(i, mRoot.load(std::memory_order_acquire));
+    auto [root, exp] = mRoot.load(std::memory_order_acquire);
+    return getImpl(i, root);
   }
   std::size_t size() const noexcept
   {
-    auto root = mRoot.load(std::memory_order_acquire);
-    return pow(BaseArraySize, root->mHeight + 1);
+    auto [root, exp] = mRoot.load(std::memory_order_acquire);
+    return 1 << exp;
   }
 };
 
-template <typename Key, typename Value, typename Hash = std::hash<Key>>
+template <typename Key, typename Value, typename Hash = std::hash<Key>, std::size_t BaseArraySize = 1 << 10>
 class LockFreeHashMap
 {
 private:
@@ -444,16 +377,22 @@ private:
     return reverse(value & sMask) | 1;
   }
 private:
+  struct BucketElementInitializer
+  {
+    void operator()(std::atomic<Node*>& elem)
+    {
+      elem.store(nullptr, std::memory_order_relaxed);
+    }
+  };
+  using Buckets = LockFreeExtendibleBucket<std::atomic<Node*>, BaseArraySize, BucketElementInitializer>;
   LockFreeList mList;
-  // TODO: make this a tree structure so that we can extend base array
-  std::vector<std::atomic<Node*>> mBuckets;
-  std::atomic<unsigned int> mBucketSize;
+  Buckets mBuckets;
   std::atomic<unsigned int> mSize;
   Hash mHash; // TODO: EBO
 private:
-  HashValueType getParentIndex(HashValueType index)
+  HashValueType getParentIndex(HashValueType index, HashValueType bucketSize)
   {
-    auto i = mBucketSize.load(std::memory_order_relaxed);
+    auto i = bucketSize;
     do
     {
       i >>= 1;
@@ -461,13 +400,13 @@ private:
     while(index < i);
     return index - i;
   }
-  void insertSentinel(HashValueType index)
+  void insertSentinel(HashValueType index, HashValueType bucketSize)
   {
-    auto parentIndex = getParentIndex(index);
+    auto parentIndex = getParentIndex(index, bucketSize);
     auto& parent = mBuckets[parentIndex];
     if(parent.load(std::memory_order_acquire) == nullptr)
     {
-      insertSentinel(parentIndex);
+      insertSentinel(parentIndex, bucketSize);
     }
     auto sentinelKey = makeSentinelKey(index);
     auto newNode = std::make_unique<Node>();
@@ -498,27 +437,28 @@ private:
   }
   std::atomic<Node*>& getSentinelNode(const Key& key)
   {
+    auto bucketSize = mBuckets.size();
     auto hashValue = mHash(key);
-    auto index = hashValue % mBucketSize.load(std::memory_order_relaxed);
+    auto index = hashValue % bucketSize;
     auto& sentinel = mBuckets[index];
     if(sentinel.load(std::memory_order_acquire) == nullptr)
     {
-      insertSentinel(index);
+      insertSentinel(index, bucketSize);
       return mBuckets[index];
     }
     return sentinel;
   }
-  static constexpr std::size_t sThreshold = 4;
+  static constexpr std::size_t sThreshold = 2;
 public:
-  LockFreeHashMap(std::size_t baseArraySize = 1 << 13)
+  LockFreeHashMap()
     : mList(0, ~static_cast<HashValueType>(0))
-    , mBuckets(baseArraySize)
-    , mBucketSize(2)
+    , mBuckets(2)
     , mSize(0)
   {
-    for(auto& val: mBuckets)
+    auto sz = mBuckets.size();
+    for(std::size_t i = 0; i < sz; ++i)
     {
-      val.store(nullptr, std::memory_order_relaxed);
+      mBuckets[i].store(nullptr, std::memory_order_relaxed);
     }
     auto head = mList.mHead.load(std::memory_order_relaxed);
     mBuckets[0].store(head, std::memory_order_release);
@@ -532,11 +472,10 @@ public:
       return false;
     }
     auto prevSize = mSize.fetch_add(1, std::memory_order_relaxed);
-    auto curBucketSize = mBucketSize.load(std::memory_order_relaxed);
-    if(prevSize / curBucketSize > sThreshold && curBucketSize < mBuckets.size())
+    auto curBucketSize = mBuckets.size();
+    if(prevSize / curBucketSize > sThreshold)
     {
-      mBucketSize.compare_exchange_strong(
-        curBucketSize, 2 * curBucketSize, std::memory_order_relaxed, std::memory_order_relaxed);
+      mBuckets.extend();
     }
     return true;
   }

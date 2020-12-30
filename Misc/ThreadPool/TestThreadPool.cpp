@@ -35,7 +35,7 @@ BOOST_AUTO_TEST_CASE(TestThreadPool)
 template <typename T>
 struct sorter
 {
-  ThreadPool pool;
+  ThreadPool<LockFreeLocalWorkQueue> pool;
   std::list<T> sort(std::list<T>& data)
   {
     using namespace std::literals::chrono_literals;

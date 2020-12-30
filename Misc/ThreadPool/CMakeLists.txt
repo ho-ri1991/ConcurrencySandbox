@@ -25,12 +25,12 @@ INCLUDE_DIRECTORIES(AFTER SYSTEM ${Boost_INCLUDE_DIR})
 LINK_DIRECTORIES(${Boost_LIBRARY_DIRS})
 
 ADD_EXECUTABLE(test_threadpool
-  ThreadPool.cpp
   TestThreadPool.cpp
 )
 
 TARGET_LINK_LIBRARIES(test_threadpool
   boost_unit_test_framework
+  pthread
 )
 
 ADD_TEST(
